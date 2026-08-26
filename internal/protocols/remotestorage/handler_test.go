@@ -3,6 +3,7 @@ package remotestorage
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -207,5 +208,80 @@ func TestMethodNotAllowed(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST status = %d, want 405", rec.Code)
+	}
+}
+
+// TestDeleteMissing verifies DELETE of a missing resource is a 404.
+func TestDeleteMissing(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+	req := httptest.NewRequest("DELETE", "/docs/missing", http.NoBody)
+	req.Host = "alice.example.com"
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DELETE missing status = %d, want 404", rec.Code)
+	}
+}
+
+// TestErrNoToken verifies the error message.
+func TestErrNoToken(t *testing.T) {
+	if errNoToken.Error() != "no bearer token" {
+		t.Fatalf("errNoToken = %q, want 'no bearer token'", errNoToken.Error())
+	}
+}
+
+// failingBackend returns errors on every operation.
+type failingBackend struct{}
+
+func (failingBackend) Put(context.Context, string, io.Reader, string) (storage.Blob, error) {
+	return storage.Blob{}, errors.New("put failed")
+}
+
+func (failingBackend) Get(context.Context, string) (io.ReadCloser, storage.Blob, error) {
+	return nil, storage.Blob{}, errors.New("get failed")
+}
+func (failingBackend) Delete(context.Context, string) error { return errors.New("delete failed") }
+func (failingBackend) List(context.Context, string) ([]storage.Blob, error) {
+	return nil, errors.New("list failed")
+}
+
+// TestStorageErrors verifies storage backend failures map to 500/404.
+func TestStorageErrors(t *testing.T) {
+	srv := &Server{
+		Backend: func(string) storage.Backend { return failingBackend{} },
+		Tokens:  fakeTokens{scopes: map[string][]string{"tok": {"rw"}}},
+	}
+	h := withTenant(srv, "alice.example.com")
+
+	// PUT storage error -> 500
+	putReq := httptest.NewRequest("PUT", "/docs/x", strings.NewReader("data"))
+	putReq.Host = "alice.example.com"
+	putReq.Header.Set("Authorization", "Bearer tok")
+	putRec := httptest.NewRecorder()
+	h.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT storage error = %d, want 500", putRec.Code)
+	}
+
+	// GET storage error -> 404 (backend.Get error treated as not found)
+	getReq := httptest.NewRequest("GET", "/docs/x", http.NoBody)
+	getReq.Host = "alice.example.com"
+	getReq.Header.Set("Authorization", "Bearer tok")
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusNotFound {
+		t.Fatalf("GET storage error = %d, want 404", getRec.Code)
+	}
+
+	// DELETE storage error -> 404
+	delReq := httptest.NewRequest("DELETE", "/docs/x", http.NoBody)
+	delReq.Host = "alice.example.com"
+	delReq.Header.Set("Authorization", "Bearer tok")
+	delRec := httptest.NewRecorder()
+	h.ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusNotFound {
+		t.Fatalf("DELETE storage error = %d, want 404", delRec.Code)
 	}
 }

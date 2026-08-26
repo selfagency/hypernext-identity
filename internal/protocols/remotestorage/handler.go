@@ -62,50 +62,65 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut:
-		if !hasScope(scopes, "rw") {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "read error", http.StatusBadRequest)
-			return
-		}
-		if _, err := backend.Put(r.Context(), key, bytes.NewReader(body), r.Header.Get("Content-Type")); err != nil {
-			http.Error(w, "storage error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("ETag", etag(body))
-		w.WriteHeader(http.StatusOK)
+		s.handlePut(w, r, backend, key, scopes)
 	case http.MethodGet:
-		if !hasScope(scopes, "r") {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		rc, blob, err := backend.Get(r.Context(), key)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		defer func() { _ = rc.Close() }()
-		w.Header().Set("Content-Type", blob.ContentType)
-		if _, err := io.Copy(w, rc); err != nil {
-			http.Error(w, "read error", http.StatusInternalServerError)
-			return
-		}
+		s.handleGet(w, r, backend, key, scopes)
 	case http.MethodDelete:
-		if !hasScope(scopes, "rw") {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		if err := backend.Delete(r.Context(), key); err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
+		s.handleDelete(w, r, backend, key, scopes)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handlePut stores a resource, requiring write scope.
+func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, backend storage.Backend, key string, scopes []string) {
+	if !hasScope(scopes, "rw") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	if _, err := backend.Put(r.Context(), key, bytes.NewReader(body), r.Header.Get("Content-Type")); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", etag(body))
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleGet serves a resource, requiring read scope.
+func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, backend storage.Backend, key string, scopes []string) {
+	if !hasScope(scopes, "r") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	rc, blob, err := backend.Get(r.Context(), key)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	w.Header().Set("Content-Type", blob.ContentType)
+	if _, err := io.Copy(w, rc); err != nil {
+		http.Error(w, "read error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// handleDelete removes a resource, requiring write scope.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, backend storage.Backend, key string, scopes []string) {
+	if !hasScope(scopes, "rw") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := backend.Delete(r.Context(), key); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // authorize extracts and validates the bearer token.
