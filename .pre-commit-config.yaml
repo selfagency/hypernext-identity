@@ -1,0 +1,42 @@
+# pre-commit configuration.
+# Install: pre-commit install
+# Run all: pre-commit run --all-files
+repos:
+  # General hygiene (auto-fix)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Go linting + formatting (golangci-lint v2 bundles gofumpt, gci, staticcheck, gosec)
+  - repo: local
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint (lint + format)
+        entry: golangci-lint run --fix --new-from-rev=HEAD
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # Go vulnerability scanning (govulncheck). Pinned via go run so it always
+  # builds with the Go version on PATH (avoids stale prebuilt binaries).
+  - repo: local
+    hooks:
+      - id: govulncheck
+        name: govulncheck (vulnerability scan)
+        entry: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # Secret scanning
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
