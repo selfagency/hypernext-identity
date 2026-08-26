@@ -1,0 +1,61 @@
+# Taskfile — dev tasks for Hypernext Identity Server.
+# Requires: go 1.27+, golangci-lint, pre-commit
+# Docs: https://taskfile.dev
+
+version: "3"
+
+vars:
+  GOVULNCHECK: golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+tasks:
+  default:
+    desc: Run lint, test, and build
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  build:
+    desc: Build a static binary (no CGO)
+    cmds:
+      - CGO_ENABLED=0 go build -o hypernext-identity ./cmd/hypernext-identity
+
+  test:
+    desc: Run all tests with race detector and coverage
+    cmds:
+      - go test ./... -race -cover
+
+  lint:
+    desc: Lint + auto-format (gofumpt, gci, staticcheck, gosec, etc.)
+    cmds:
+      - golangci-lint run ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  vulncheck:
+    desc: Vulnerability scan (SAST)
+    cmds:
+      - go run {{.GOVULNCHECK}} ./...
+
+  fmt:
+    desc: Format all Go files in place
+    cmds:
+      - golangci-lint run --fix ./...
+
+  hooks:
+    desc: Run all pre-commit hooks on all files
+    cmds:
+      - pre-commit run --all-files
+
+  install-hooks:
+    desc: Install pre-commit git hooks
+    cmds:
+      - pre-commit install
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -f hypernext-identity
