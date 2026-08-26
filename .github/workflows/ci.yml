@@ -70,6 +70,7 @@ jobs:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           coverage-reports: coverage.out
           language: go
+          force-coverage-parser: go
 
   build:
     name: Cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
