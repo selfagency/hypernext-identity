@@ -1,0 +1,17 @@
+# Codecov configuration.
+# Enforces an 80% coverage gate as a PR status check.
+# Docs: https://docs.codecov.com/docs/commit-status
+coverage:
+  status:
+    project:
+      default:
+        target: 80%        # fail PR if project coverage < 80%
+        threshold: 0%      # no tolerance
+    patch:
+      default:
+        target: 80%        # also gate the diff
+        threshold: 0%
+
+# Ignore generated/test scaffolding from coverage accounting.
+ignore:
+  - "cmd/hypernext-identity/main.go"  # 2-line os.Exit bootstrap, untestable in-process
