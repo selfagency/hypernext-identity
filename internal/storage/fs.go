@@ -24,9 +24,10 @@ func (f *FS) path(key string) string {
 	return filepath.Join(f.Root, clean)
 }
 
+// Put stores r under key, persisting contentType in a sidecar file.
 func (f *FS) Put(ctx context.Context, key string, r io.Reader, contentType string) (Blob, error) {
 	p := f.path(key)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		return Blob{}, err
 	}
 	fh, err := os.Create(p)
@@ -41,12 +42,13 @@ func (f *FS) Put(ctx context.Context, key string, r io.Reader, contentType strin
 		return Blob{}, err
 	}
 	// Persist content type in a sidecar file so Get can return it.
-	if err := os.WriteFile(p+".meta", []byte(contentType), 0o644); err != nil {
+	if err := os.WriteFile(p+".meta", []byte(contentType), 0o600); err != nil {
 		return Blob{}, err
 	}
 	return Blob{Key: key, ContentType: contentType, Size: n}, nil
 }
 
+// Get returns the stored object for key.
 func (f *FS) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
 	p := f.path(key)
 	fh, err := os.Open(p)
@@ -58,13 +60,14 @@ func (f *FS) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
 	}
 	st, err := fh.Stat()
 	if err != nil {
-		fh.Close()
+		_ = fh.Close()
 		return nil, Blob{}, err
 	}
 	ct, _ := os.ReadFile(p + ".meta")
 	return fh, Blob{Key: key, ContentType: string(ct), Size: st.Size()}, nil
 }
 
+// Delete removes the stored object for key.
 func (f *FS) Delete(ctx context.Context, key string) error {
 	p := f.path(key)
 	err := os.Remove(p)
@@ -76,6 +79,7 @@ func (f *FS) Delete(ctx context.Context, key string) error {
 	return err
 }
 
+// List returns all stored objects under prefix.
 func (f *FS) List(ctx context.Context, prefix string) ([]Blob, error) {
 	dir := filepath.Join(f.Root, filepath.Clean("/"+prefix))
 	var out []Blob

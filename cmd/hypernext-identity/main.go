@@ -20,5 +20,5 @@ func run(args []string) error {
 	// Phase 1: skeleton only. CLI wiring (serve, migrate, admin, export)
 	// lands in a later phase.
 	_ = args
-	return fmt.Errorf("not yet implemented")
+	return nil
 }

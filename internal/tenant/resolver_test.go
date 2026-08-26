@@ -25,7 +25,7 @@ func TestMiddleware_ResolvesKnownTenant(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured, _ = FromContext(r.Context())
 	})
-	req := httptest.NewRequest("GET", "https://alice.example.com/", nil)
+	req := httptest.NewRequest("GET", "https://alice.example.com/", http.NoBody)
 	Middleware(store)(next).ServeHTTP(httptest.NewRecorder(), req)
 
 	if captured == nil || captured.ID != "t1" {
@@ -36,7 +36,7 @@ func TestMiddleware_ResolvesKnownTenant(t *testing.T) {
 func TestMiddleware_RejectsUnknownHost(t *testing.T) {
 	store := fakeStore{tenants: map[string]*Tenant{}}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "https://ghost.example.com/", nil)
+	req := httptest.NewRequest("GET", "https://ghost.example.com/", http.NoBody)
 	Middleware(store)(http.NotFoundHandler()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -52,7 +52,7 @@ func TestMiddleware_StripsPortFromHost(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured, _ = FromContext(r.Context())
 	})
-	req := httptest.NewRequest("GET", "https://alice.example.com:8443/", nil)
+	req := httptest.NewRequest("GET", "https://alice.example.com:8443/", http.NoBody)
 	Middleware(store)(next).ServeHTTP(httptest.NewRecorder(), req)
 
 	if captured == nil || captured.ID != "t1" {

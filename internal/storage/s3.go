@@ -29,7 +29,7 @@ type S3Config struct {
 
 // NewS3 builds an S3 backend and verifies the bucket exists (creating it
 // if missing).
-func NewS3(cfg S3Config) (*S3, error) {
+func NewS3(cfg *S3Config) (*S3, error) {
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure: cfg.Secure,
@@ -51,6 +51,7 @@ func NewS3(cfg S3Config) (*S3, error) {
 	return &S3{client: client, bucket: cfg.Bucket}, nil
 }
 
+// Put stores r under key in the S3 bucket.
 func (s *S3) Put(ctx context.Context, key string, r io.Reader, contentType string) (Blob, error) {
 	info, err := s.client.PutObject(ctx, s.bucket, key, r, -1, minio.PutObjectOptions{ContentType: contentType})
 	if err != nil {
@@ -59,6 +60,7 @@ func (s *S3) Put(ctx context.Context, key string, r io.Reader, contentType strin
 	return Blob{Key: key, ContentType: contentType, Size: info.Size}, nil
 }
 
+// Get returns the stored object for key.
 func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
 	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
@@ -66,7 +68,7 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
 	}
 	st, err := obj.Stat()
 	if err != nil {
-		obj.Close()
+		_ = obj.Close()
 		if isNotFound(err) {
 			return nil, Blob{}, ErrNotFound
 		}
@@ -75,6 +77,7 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
 	return obj, Blob{Key: key, ContentType: st.ContentType, Size: st.Size}, nil
 }
 
+// Delete removes the stored object for key.
 func (s *S3) Delete(ctx context.Context, key string) error {
 	err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 	if err != nil && !isNotFound(err) {
@@ -83,6 +86,7 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// List returns all stored objects under prefix.
 func (s *S3) List(ctx context.Context, prefix string) ([]Blob, error) {
 	var out []Blob
 	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
