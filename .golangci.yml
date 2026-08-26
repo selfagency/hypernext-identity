@@ -1,0 +1,58 @@
+# golangci-lint v2 configuration.
+# Run: golangci-lint run ./...   (add --fix to auto-format)
+version: "2"
+
+linters:
+  # Standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - gosec        # SAST: security static analysis
+    - misspell     # typo detection
+    - revive       # golint successor (style)
+    - bodyclose    # ensure response bodies are closed
+    - noctx        # enforce context.Context on http calls
+    - gocritic     # performance/correctness/style checks
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/hypernext/identity)
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+  exclusions:
+    generated: lax
+    rules:
+      # Test files: allow unchecked errors in setup, skip some SAST noise.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - noctx
+      # Example config values are not real secrets.
+      - path: config\.example\.yml
+        linters:
+          - gosec
+      # Storage backend's job is opening files by key; path is sanitized
+      # against traversal in FS.path. G304 is a false positive here.
+      - path: internal/storage/fs\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/hypernext/identity)

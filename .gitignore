@@ -1,0 +1,21 @@
+# Binaries
+/hypernext-identity
+/dist/
+*.exe
+
+# Local data (sqlite, blobs, keys, certmagic cache)
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Config with secrets
+config.yml
+.env
+
+# Test artifacts
+/coverage/
+*.out
+
+# OS
+.DS_Store
