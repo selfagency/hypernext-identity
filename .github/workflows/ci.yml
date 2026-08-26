@@ -18,7 +18,7 @@ jobs:
         with:
           go-version: "1.27"
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.1
       - name: govulncheck
@@ -34,6 +34,7 @@ jobs:
     services:
       minio:
         image: minio/minio:latest
+        command: ["server", "/data"]
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
