@@ -40,6 +40,13 @@ linters:
       - path: internal/storage/fs\.go
         linters:
           - gosec
+      # auth/storage.go implements the zitadel/oidc op.Storage and op.Client
+      # interfaces; every method is required by the interface and must be
+      # exported. Doc comments on each would be pure noise.
+      - path: internal/auth/storage\.go
+        linters:
+          - revive
+          - gocritic
 
 formatters:
   enable:
