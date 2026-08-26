@@ -10,10 +10,19 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	os.Exit(runMain(os.Args[1:]))
+}
+
+// runFn is a package-level hook so tests can exercise runMain's error path.
+var runFn = run
+
+// runMain runs the CLI and returns a process exit code.
+func runMain(args []string) int {
+	if err := runFn(args); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func run(args []string) error {
