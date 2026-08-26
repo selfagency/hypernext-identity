@@ -13,11 +13,6 @@ linters:
     - noctx        # enforce context.Context on http calls
     - gocritic     # performance/correctness/style checks
   settings:
-    gci:
-      sections:
-        - standard
-        - default
-        - prefix(github.com/hypernext/identity)
     revive:
       rules:
         - name: exported
