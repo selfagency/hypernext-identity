@@ -1,0 +1,89 @@
+package atproto
+
+import (
+	"context"
+	"io"
+	"testing"
+
+	"github.com/bluesky-social/indigo/atproto/atcrypto"
+)
+
+// testRecord is a minimal CborMarshaler for repo tests.
+type testRecord struct {
+	Text string `json:"text"`
+}
+
+func (r *testRecord) MarshalCBOR(w io.Writer) error {
+	// Minimal CBOR encoding: a map with one key "text".
+	_, err := w.Write([]byte{0xa1, 0x64, 't', 'e', 'x', 't', 0x64})
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte(r.Text))
+	return err
+}
+
+// TestRepoCommitSigning verifies repo creation, record write, and commit signing.
+func TestRepoCommitSigning(t *testing.T) {
+	ctx := context.Background()
+	sk, err := atcrypto.GeneratePrivateKeyP256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := "did:plc:abc123"
+
+	r, err := NewRepo(ctx, did, sk)
+	if err != nil {
+		t.Fatalf("NewRepo: %v", err)
+	}
+
+	// Create a record.
+	cid, tid, err := r.CreateRecord(ctx, "app.bsky.feed.post", &testRecord{Text: "hello"})
+	if err != nil {
+		t.Fatalf("CreateRecord: %v", err)
+	}
+	if cid == "" || tid == "" {
+		t.Fatalf("empty cid/tid: %q %q", cid, tid)
+	}
+
+	// Commit.
+	commitCid, rev, err := r.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if commitCid == "" || rev == "" {
+		t.Fatalf("empty commit cid/rev: %q %q", commitCid, rev)
+	}
+
+	// Verify the commit signature with the public key.
+	pub, err := sk.PublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.VerifyCommit(pub); err != nil {
+		t.Fatalf("VerifyCommit: %v", err)
+	}
+}
+
+// TestRepoVerifyCommitWrongKey verifies a wrong key fails verification.
+func TestRepoVerifyCommitWrongKey(t *testing.T) {
+	ctx := context.Background()
+	sk, _ := atcrypto.GeneratePrivateKeyP256()
+	other, _ := atcrypto.GeneratePrivateKeyP256()
+
+	r, err := NewRepo(ctx, "did:plc:abc123", sk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.CreateRecord(ctx, "app.bsky.feed.post", &testRecord{Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	otherPub, _ := other.PublicKey()
+	if err := r.VerifyCommit(otherPub); err == nil {
+		t.Fatal("expected verification failure with wrong key")
+	}
+}
