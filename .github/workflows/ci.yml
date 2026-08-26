@@ -56,7 +56,14 @@ jobs:
           MINIO_ACCESS_KEY: minioadmin
           MINIO_SECRET_KEY: minioadmin
           MINIO_BUCKET: test
-        run: go test ./... -race -cover
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Upload coverage to Codacy
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: coverage.out
+          language: go
 
   build:
     name: Cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
