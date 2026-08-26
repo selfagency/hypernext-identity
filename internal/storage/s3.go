@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -53,7 +54,13 @@ func NewS3(cfg *S3Config) (*S3, error) {
 
 // Put stores r under key in the S3 bucket.
 func (s *S3) Put(ctx context.Context, key string, r io.Reader, contentType string) (Blob, error) {
-	info, err := s.client.PutObject(ctx, s.bucket, key, r, -1, minio.PutObjectOptions{ContentType: contentType})
+	// Read fully to determine size so minio-go uses a single PUT rather than
+	// multipart upload (simpler, and blob sizes here are modest).
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return Blob{}, err
+	}
+	info, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{ContentType: contentType})
 	if err != nil {
 		return Blob{}, err
 	}

@@ -35,6 +35,16 @@ repos:
         types: [go]
         pass_filenames: false
 
+  # Coverage gate: fail the commit if total Go coverage drops below 80%.
+  - repo: local
+    hooks:
+      - id: coverage
+        name: coverage (>= 80%)
+        entry: scripts/coverage-gate.sh
+        language: system
+        types: [go]
+        pass_filenames: false
+
   # Secret scanning
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1

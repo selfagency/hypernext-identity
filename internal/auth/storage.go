@@ -205,9 +205,16 @@ func (s *MemoryStore) CreateAccessToken(_ context.Context, _ op.TokenRequest) (s
 	return newID(), time.Now().Add(time.Hour), nil
 }
 
-func (s *MemoryStore) CreateAccessAndRefreshTokens(_ context.Context, _ op.TokenRequest, _ string) (string, string, time.Time, error) {
+func (s *MemoryStore) CreateAccessAndRefreshTokens(ctx context.Context, request op.TokenRequest, _ string) (string, string, time.Time, error) {
 	access := newID()
 	refresh := newID()
+	// Persist the refresh token so TokenRequestByRefreshToken can resolve it.
+	s.refresh[refresh] = &refreshTokenRequest{
+		subject:  request.GetSubject(),
+		clientID: request.GetAudience()[0],
+		scopes:   request.GetScopes(),
+		authTime: time.Now(),
+	}
 	return access, refresh, time.Now().Add(time.Hour), nil
 }
 

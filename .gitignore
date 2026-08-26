@@ -19,3 +19,7 @@ config.yml
 
 # OS
 .DS_Store
+
+# Agent tooling state
+.cortexkit/
+.opencode/
