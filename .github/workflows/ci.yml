@@ -72,6 +72,12 @@ jobs:
           language: go
           force-coverage-parser: go
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
+        with:
+          files: coverage.out
+          fail_ci_if_error: true
+
   build:
     name: Cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
