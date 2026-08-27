@@ -15,6 +15,7 @@ require (
 	github.com/zitadel/oidc/v3 v3.49.2
 	go.hacdias.com/indielib v0.5.0
 	golang.org/x/crypto v0.55.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.57.0
 )
 
