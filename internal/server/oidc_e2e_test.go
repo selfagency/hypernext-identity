@@ -56,3 +56,36 @@ func TestOIDCNotOnTenantHost(t *testing.T) {
 		t.Fatal("OIDC discovery served on tenant host")
 	}
 }
+
+// TestWebAuthnBeginUnknownUser verifies the WebAuthn register-begin endpoint
+// rejects an unknown user.
+func TestWebAuthnBeginUnknownUser(t *testing.T) {
+	ts := startTestServer(t, &Config{}, false)
+
+	status, _ := ts.get(t, "/webauthn/register/begin?handle=nobody", "id.example.com")
+	if status != 400 {
+		t.Fatalf("register begin unknown user status = %d, want 400", status)
+	}
+}
+
+// TestWebAuthnBeginMissingHandle verifies the WebAuthn register-begin
+// endpoint requires a handle.
+func TestWebAuthnBeginMissingHandle(t *testing.T) {
+	ts := startTestServer(t, &Config{}, false)
+
+	status, _ := ts.get(t, "/webauthn/register/begin", "id.example.com")
+	if status != 400 {
+		t.Fatalf("register begin missing handle status = %d, want 400", status)
+	}
+}
+
+// TestWebAuthnNotOnTenantHost verifies WebAuthn endpoints are not served on
+// tenant hosts.
+func TestWebAuthnNotOnTenantHost(t *testing.T) {
+	ts := startTestServer(t, &Config{}, true)
+
+	status, _ := ts.get(t, "/webauthn/register/begin?handle=nobody", "alice.example.com")
+	if status == 200 {
+		t.Fatal("WebAuthn served on tenant host")
+	}
+}

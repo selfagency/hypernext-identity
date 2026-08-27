@@ -220,6 +220,7 @@ func migrateV3(ctx context.Context, tx *sql.Tx) error {
 			credential_id BLOB NOT NULL,
 			public_key    BLOB NOT NULL,
 			sign_count    INTEGER NOT NULL DEFAULT 0,
+			data          BLOB NOT NULL,
 			created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(user_id, credential_id)
 		)`,

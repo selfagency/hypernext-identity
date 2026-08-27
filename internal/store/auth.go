@@ -121,6 +121,7 @@ type WebAuthnCredential struct {
 	CredentialID []byte
 	PublicKey    []byte
 	SignCount    uint32
+	Data         []byte // full go-webauthn Credential JSON
 	CreatedAt    time.Time
 }
 
@@ -279,8 +280,8 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 // AddWebAuthnCredential stores a passkey for a user.
 func (s *Store) AddWebAuthnCredential(ctx context.Context, c *WebAuthnCredential) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO webauthn_credentials (id, user_id, credential_id, public_key, sign_count) VALUES (?, ?, ?, ?, ?)`,
-		c.ID, c.UserID, c.CredentialID, c.PublicKey, c.SignCount)
+		`INSERT INTO webauthn_credentials (id, user_id, credential_id, public_key, sign_count, data) VALUES (?, ?, ?, ?, ?, ?)`,
+		c.ID, c.UserID, c.CredentialID, c.PublicKey, c.SignCount, c.Data)
 	if err != nil {
 		return fmt.Errorf("store: add webauthn credential: %w", err)
 	}
@@ -290,7 +291,7 @@ func (s *Store) AddWebAuthnCredential(ctx context.Context, c *WebAuthnCredential
 // ListWebAuthnCredentials returns all passkeys for a user.
 func (s *Store) ListWebAuthnCredentials(ctx context.Context, userID string) ([]WebAuthnCredential, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, credential_id, public_key, sign_count, created_at FROM webauthn_credentials WHERE user_id = ?`, userID)
+		`SELECT id, user_id, credential_id, public_key, sign_count, data, created_at FROM webauthn_credentials WHERE user_id = ?`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list webauthn credentials: %w", err)
 	}
@@ -298,7 +299,7 @@ func (s *Store) ListWebAuthnCredentials(ctx context.Context, userID string) ([]W
 	var out []WebAuthnCredential
 	for rows.Next() {
 		var c WebAuthnCredential
-		if err := rows.Scan(&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey, &c.SignCount, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey, &c.SignCount, &c.Data, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -309,9 +310,9 @@ func (s *Store) ListWebAuthnCredentials(ctx context.Context, userID string) ([]W
 // GetWebAuthnCredential returns a passkey by credential ID.
 func (s *Store) GetWebAuthnCredential(ctx context.Context, credentialID []byte) (*WebAuthnCredential, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, credential_id, public_key, sign_count, created_at FROM webauthn_credentials WHERE credential_id = ?`, credentialID)
+		`SELECT id, user_id, credential_id, public_key, sign_count, data, created_at FROM webauthn_credentials WHERE credential_id = ?`, credentialID)
 	var c WebAuthnCredential
-	err := row.Scan(&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey, &c.SignCount, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey, &c.SignCount, &c.Data, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

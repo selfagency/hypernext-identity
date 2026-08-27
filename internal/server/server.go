@@ -212,17 +212,33 @@ func (s *Server) buildRouter() {
 		s.logger.Error("oidc provider init failed", "err", err)
 	}
 
+	// WebAuthn passkey endpoints, served on the identity host.
+	waHandler, err := auth.NewWebAuthnHandler(identityHost, "Sovereign", "https://"+identityHost, s.store)
+	if err != nil {
+		s.logger.Error("webauthn init failed", "err", err)
+	}
+
 	// IndieAuth.
 	bridge := indieauth.NewBridge(true, nil)
 	_ = bridge
 
-	// Host-based dispatch: the identity host serves the OIDC provider;
-	// every other host serves the protocol mux.
+	// Host-based dispatch: the identity host serves the OIDC provider and
+	// WebAuthn endpoints; every other host serves the protocol mux.
 	var root http.Handler = mux
-	if provider != nil {
+	if provider != nil || waHandler != nil {
+		identity := http.NewServeMux()
+		if provider != nil {
+			identity.Handle("/", provider.Handler())
+		}
+		if waHandler != nil {
+			identity.Handle("/webauthn/register/begin", http.HandlerFunc(waHandler.RegisterBegin))
+			identity.Handle("/webauthn/register/finish", http.HandlerFunc(waHandler.RegisterFinish))
+			identity.Handle("/webauthn/login/begin", http.HandlerFunc(waHandler.LoginBegin))
+			identity.Handle("/webauthn/login/finish", http.HandlerFunc(waHandler.LoginFinish))
+		}
 		root = hostRouter{
 			identityHost: identityHost,
-			identity:     provider.Handler(),
+			identity:     identity,
 			other:        mux,
 		}
 	}

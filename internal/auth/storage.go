@@ -14,6 +14,7 @@ import (
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
 )
@@ -24,14 +25,9 @@ type User struct {
 	ID          string
 	Handle      string // e.g. "alice.example.com"
 	DisplayName string
-	// Credentials holds WebAuthn passkeys (populated in the WebAuthn phase).
-	Credentials []webauthnCredential
-}
-
-// webauthnCredential is a placeholder to keep the storage self-contained;
-// the WebAuthn phase replaces it with go-webauthn's Credential type.
-type webauthnCredential struct {
-	ID []byte
+	// Credentials holds WebAuthn passkeys (populated from the store before
+	// begin/finish).
+	Credentials []webauthn.Credential
 }
 
 // Client is an OIDC relying party registered with the provider.
