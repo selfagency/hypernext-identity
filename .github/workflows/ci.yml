@@ -53,6 +53,7 @@ jobs:
         with:
           go-version: "1.27"
       - name: Test (with S3 contract suite)
+        id: test
         env:
           MINIO_ENDPOINT: localhost:9000
           MINIO_ACCESS_KEY: minioadmin
@@ -64,9 +65,11 @@ jobs:
       # coverprofile emits module-qualified paths. Strip the module prefix
       # so Codacy can map coverage to tracked files.
       - name: Normalize coverage paths
+        if: always()
         run: sed -i 's|github.com/hypernext/identity/||' coverage.out
 
       - name: Upload coverage to Codacy
+        if: always()
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
@@ -75,6 +78,7 @@ jobs:
           force-coverage-parser: go
 
       - name: Upload coverage to Codecov
+        if: always()
         uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
         with:
           files: coverage.out
