@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -90,16 +91,33 @@ func startTestServer(t *testing.T, cfg *Config, seedTenant bool) *testServer {
 // get performs a GET with the given Host header and returns status + body.
 func (ts *testServer) get(t *testing.T, path, host string) (status int, body string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, ts.baseURL+path, http.NoBody)
+	return ts.do(t, http.MethodGet, path, host, "", "", nil)
+}
+
+// do performs a request with the given method, Host header, bearer token,
+// and body, returning status + body.
+func (ts *testServer) do(t *testing.T, method, path, host, token, contentType string, body []byte) (status int, respBody string) {
+	t.Helper()
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, ts.baseURL+path, rdr)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	if host != "" {
 		req.Host = host
 	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("GET %s: %v", path, err)
+		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)

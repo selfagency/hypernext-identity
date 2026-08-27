@@ -13,6 +13,15 @@ type Agent struct {
 	WebID string
 }
 
+// TokenValidator validates a bearer token and returns the authenticated
+// subject (used to derive the agent's WebID). The wiring package implements
+// this; the interface keeps the LDP handler decoupled and testable.
+type TokenValidator interface {
+	// ValidateToken returns the subject for a bearer token, or an error if
+	// the token is invalid.
+	ValidateToken(ctx context.Context, token string) (string, error)
+}
+
 // ACLChecker authorizes access to resources. The storage phase wires a real
 // implementation; the interface keeps the LDP handler decoupled and testable.
 type ACLChecker interface {
