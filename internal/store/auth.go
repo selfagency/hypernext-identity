@@ -14,13 +14,16 @@ type AuthSigningKey struct {
 	CreatedAt time.Time
 }
 
-// AuthRefreshToken is a persisted refresh token grant.
+// AuthRefreshToken is a persisted refresh token grant. The Token field holds
+// the SHA-256 hash of the raw token, never the raw token itself.
 type AuthRefreshToken struct {
 	Token     string
 	Subject   string
 	ClientID  string
 	Scopes    string // comma-joined
 	AuthTime  time.Time
+	ExpiresAt time.Time
+	RevokedAt time.Time
 	CreatedAt time.Time
 }
 
@@ -48,21 +51,24 @@ func (s *Store) GetAuthSigningKey(ctx context.Context, id string) (*AuthSigningK
 // SaveAuthRefreshToken persists a refresh token grant.
 func (s *Store) SaveAuthRefreshToken(ctx context.Context, t *AuthRefreshToken) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO auth_refresh_tokens (token, subject, client_id, scopes, auth_time, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		t.Token, t.Subject, t.ClientID, t.Scopes, t.AuthTime, t.CreatedAt)
+		`INSERT OR REPLACE INTO auth_refresh_tokens (token, subject, client_id, scopes, auth_time, expires_at, revoked_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Token, t.Subject, t.ClientID, t.Scopes, t.AuthTime, nullableTime(t.ExpiresAt), nullableTime(t.RevokedAt), t.CreatedAt)
 	return err
 }
 
 // GetAuthRefreshToken returns a refresh token grant.
 func (s *Store) GetAuthRefreshToken(ctx context.Context, token string) (*AuthRefreshToken, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT token, subject, client_id, scopes, auth_time, created_at FROM auth_refresh_tokens WHERE token = ?`, token)
+		`SELECT token, subject, client_id, scopes, auth_time, expires_at, revoked_at, created_at FROM auth_refresh_tokens WHERE token = ?`, token)
 	var t AuthRefreshToken
-	err := row.Scan(&t.Token, &t.Subject, &t.ClientID, &t.Scopes, &t.AuthTime, &t.CreatedAt)
+	var exp, rev sql.NullTime
+	err := row.Scan(&t.Token, &t.Subject, &t.ClientID, &t.Scopes, &t.AuthTime, &exp, &rev, &t.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
+	t.ExpiresAt = exp.Time
+	t.RevokedAt = rev.Time
 	return &t, err
 }
 

@@ -10,6 +10,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"errors"
+	"sync"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -41,10 +42,12 @@ type Client struct {
 	Scopes           []string
 }
 
-// signingKey wraps an RSA key for ID/access token signing.
+// signingKey wraps an RSA key for ID/access token signing. The key is a
+// concrete *rsa.PrivateKey; the `any` return on Key() is forced by the
+// zitadel/oidc op.SigningKey interface boundary.
 type signingKey struct {
 	id  string
-	key any
+	key *rsa.PrivateKey
 }
 
 func (k *signingKey) SignatureAlgorithm() jose.SignatureAlgorithm { return jose.RS256 }
@@ -54,7 +57,7 @@ func (k *signingKey) ID() string                                  { return k.id 
 // key is the public half exposed in the JWKS.
 type key struct {
 	id  string
-	key any
+	key *rsa.PrivateKey
 }
 
 func (k *key) ID() string                         { return k.id }
@@ -113,7 +116,9 @@ func (r *refreshTokenRequest) SetCurrentScopes(scopes []string) { r.scopes = sco
 
 // MemoryStore is an in-memory implementation of op.Storage. It is the
 // TDD-friendly default; a SQLite-backed store replaces it in a later phase.
+// It is safe for concurrent use: all map access is guarded by mu.
 type MemoryStore struct {
+	mu       sync.RWMutex
 	users    map[string]*User
 	clients  map[string]*Client
 	authReqs map[string]*authRequest
@@ -139,23 +144,37 @@ func NewMemoryStore() (*MemoryStore, error) {
 }
 
 // AddUser registers a user.
-func (s *MemoryStore) AddUser(u *User) { s.users[u.ID] = u }
+func (s *MemoryStore) AddUser(u *User) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.users[u.ID] = u
+}
 
 // SetSigningKey replaces the signing key (used to restore a persisted key).
-func (s *MemoryStore) SetSigningKey(priv any) {
+func (s *MemoryStore) SetSigningKey(priv *rsa.PrivateKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.signing = &signingKey{id: "signing-1", key: priv}
 }
 
 // SigningKeyMaterial returns the raw signing key material.
-func (s *MemoryStore) SigningKeyMaterial() any {
+func (s *MemoryStore) SigningKeyMaterial() *rsa.PrivateKey {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.signing.key
 }
 
 // AddClient registers an OIDC client.
-func (s *MemoryStore) AddClient(c *Client) { s.clients[c.ID] = c }
+func (s *MemoryStore) AddClient(c *Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clients[c.ID] = c
+}
 
 // UserByID returns a user by ID.
 func (s *MemoryStore) UserByID(id string) (*User, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	u, ok := s.users[id]
 	return u, ok
 }
@@ -181,12 +200,16 @@ func (s *MemoryStore) CreateAuthRequest(_ context.Context, req *oidc.AuthRequest
 		},
 		authTime: time.Now(),
 	}
+	s.mu.Lock()
 	s.authReqs[ar.id] = ar
+	s.mu.Unlock()
 	return ar, nil
 }
 
 func (s *MemoryStore) AuthRequestByID(_ context.Context, id string) (op.AuthRequest, error) {
+	s.mu.RLock()
 	ar, ok := s.authReqs[id]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, errors.New("auth request not found")
 	}
@@ -194,7 +217,9 @@ func (s *MemoryStore) AuthRequestByID(_ context.Context, id string) (op.AuthRequ
 }
 
 func (s *MemoryStore) AuthRequestByCode(_ context.Context, code string) (op.AuthRequest, error) {
+	s.mu.RLock()
 	id, ok := s.codes[code]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, errors.New("auth code not found")
 	}
@@ -202,12 +227,16 @@ func (s *MemoryStore) AuthRequestByCode(_ context.Context, code string) (op.Auth
 }
 
 func (s *MemoryStore) SaveAuthCode(_ context.Context, id, code string) error {
+	s.mu.Lock()
 	s.codes[code] = id
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *MemoryStore) DeleteAuthRequest(_ context.Context, id string) error {
+	s.mu.Lock()
 	delete(s.authReqs, id)
+	s.mu.Unlock()
 	return nil
 }
 
@@ -219,17 +248,21 @@ func (s *MemoryStore) CreateAccessAndRefreshTokens(ctx context.Context, request 
 	access := newID()
 	refresh := newID()
 	// Persist the refresh token so TokenRequestByRefreshToken can resolve it.
+	s.mu.Lock()
 	s.refresh[refresh] = &refreshTokenRequest{
 		subject:  request.GetSubject(),
 		clientID: request.GetAudience()[0],
 		scopes:   request.GetScopes(),
 		authTime: time.Now(),
 	}
+	s.mu.Unlock()
 	return access, refresh, time.Now().Add(time.Hour), nil
 }
 
 func (s *MemoryStore) TokenRequestByRefreshToken(_ context.Context, refreshToken string) (op.RefreshTokenRequest, error) {
+	s.mu.RLock()
 	r, ok := s.refresh[refreshToken]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, op.ErrInvalidRefreshToken
 	}
@@ -239,12 +272,16 @@ func (s *MemoryStore) TokenRequestByRefreshToken(_ context.Context, refreshToken
 func (s *MemoryStore) TerminateSession(_ context.Context, _ string, _ string) error { return nil }
 
 func (s *MemoryStore) RevokeToken(_ context.Context, tokenOrTokenID string, _ string, _ string) *oidc.Error {
+	s.mu.Lock()
 	delete(s.refresh, tokenOrTokenID)
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *MemoryStore) GetRefreshTokenInfo(_ context.Context, _ string, token string) (string, string, error) {
+	s.mu.RLock()
 	r, ok := s.refresh[token]
+	s.mu.RUnlock()
 	if !ok {
 		return "", "", op.ErrInvalidRefreshToken
 	}
@@ -252,6 +289,8 @@ func (s *MemoryStore) GetRefreshTokenInfo(_ context.Context, _ string, token str
 }
 
 func (s *MemoryStore) SigningKey(_ context.Context) (op.SigningKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.signing, nil
 }
 
@@ -260,13 +299,17 @@ func (s *MemoryStore) SignatureAlgorithms(_ context.Context) ([]jose.SignatureAl
 }
 
 func (s *MemoryStore) KeySet(_ context.Context) ([]op.Key, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return []op.Key{&key{id: s.signing.id, key: s.signing.key}}, nil
 }
 
 // --- op.OPStorage ---
 
 func (s *MemoryStore) GetClientByClientID(_ context.Context, clientID string) (op.Client, error) {
+	s.mu.RLock()
 	c, ok := s.clients[clientID]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, errors.New("client not found")
 	}
@@ -274,7 +317,9 @@ func (s *MemoryStore) GetClientByClientID(_ context.Context, clientID string) (o
 }
 
 func (s *MemoryStore) AuthorizeClientIDSecret(_ context.Context, clientID, clientSecret string) error {
+	s.mu.RLock()
 	c, ok := s.clients[clientID]
+	s.mu.RUnlock()
 	if !ok {
 		return errors.New("client not found")
 	}
@@ -301,6 +346,8 @@ func (s *MemoryStore) GetPrivateClaimsFromScopes(_ context.Context, _ string, _ 
 }
 
 func (s *MemoryStore) GetKeyByIDAndClientID(_ context.Context, keyID, _ string) (*jose.JSONWebKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if keyID != s.signing.id {
 		return nil, errors.New("key not found")
 	}
@@ -353,6 +400,6 @@ func newID() string {
 }
 
 // generateRSAKey creates an RSA-2048 signing key for ID/access tokens.
-func generateRSAKey() (any, error) {
+func generateRSAKey() (*rsa.PrivateKey, error) {
 	return rsa.GenerateKey(rand.Reader, 2048)
 }

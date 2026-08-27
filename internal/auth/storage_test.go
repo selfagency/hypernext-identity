@@ -2,12 +2,43 @@ package auth
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
+
+// TestMemoryStoreConcurrentAccess verifies MemoryStore is safe under
+// concurrent read/write. It must pass under -race; it fails on the
+// unsynchronized maps (concurrent map read and map write panic).
+func TestMemoryStoreConcurrentAccess(t *testing.T) {
+	store, err := NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	store.AddUser(&User{ID: "u1", Handle: "a.example.com"})
+	store.AddClient(&Client{ID: "c1", Secret: "s1"})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("u%d", i)
+			store.AddUser(&User{ID: id, Handle: id + ".example.com"})
+			_, _ = store.UserByID("u1")
+			_, _ = store.GetClientByClientID(ctx, "c1")
+			_, _ = store.SigningKey(ctx)
+			_, _ = store.KeySet(ctx)
+			_ = store.AuthorizeClientIDSecret(ctx, "c1", "s1")
+		}(i)
+	}
+	wg.Wait()
+}
 
 // TestMemoryStoreUserAndClient verifies user/client registration and lookup.
 func TestMemoryStoreUserAndClient(t *testing.T) {

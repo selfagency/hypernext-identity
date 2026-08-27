@@ -6,29 +6,51 @@ package store
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 // Open opens (and creates if needed) a SQLite database at path and applies
-// the schema migrations.
+// the schema migrations. It hardens the data directory and DB file
+// permissions so the signing key and refresh-token hashes are not world-
+// readable.
 func Open(path string) (*Store, error) {
+	// Ensure the parent directory is not group/world accessible.
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
 	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	// Enable foreign keys (OFF by default in SQLite) so ON DELETE CASCADE
 	// works for profile_links.
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	s := &Store{db: db}
 	if err := s.migrate(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// Restrict the DB file to owner-only (it holds the signing key).
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
@@ -116,8 +138,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			client_id  TEXT NOT NULL,
 			scopes     TEXT NOT NULL,
 			auth_time  TIMESTAMP NOT NULL,
+			expires_at TIMESTAMP,
+			revoked_at TIMESTAMP,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// NOTE: existing databases created before the expires_at/revoked_at
+		// columns are upgraded by the migration runner (PR2). Fresh databases
+		// get the columns from the CREATE TABLE above.
 		`CREATE TABLE IF NOT EXISTS tenants (
 			id         TEXT PRIMARY KEY,
 			handle     TEXT NOT NULL UNIQUE,
@@ -138,4 +165,12 @@ func (s *Store) migrate(ctx context.Context) error {
 // violation (SQLITE_CONSTRAINT_UNIQUE, code 2067).
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
+// nullableTime converts a zero time.Time to a NULL for SQLite columns.
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }

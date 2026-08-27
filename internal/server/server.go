@@ -126,7 +126,7 @@ func (s *Server) buildRouter() {
 	// remoteStorage.
 	rs := &remotestorage.Server{
 		Backend: backendFor,
-		Tokens:  &wiring.TokenValidator{Auth: s.authStore},
+		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKey()},
 	}
 	mux.Handle("/rs/", rs)
 
@@ -134,7 +134,7 @@ func (s *Server) buildRouter() {
 	solidSrv := &solid.Server{
 		Backend: backendFor,
 		ACL:     &wiring.ACLChecker{Store: s.store},
-		Tokens:  &wiring.SubjectValidator{Auth: s.authStore},
+		Tokens:  &wiring.SubjectValidator{Key: s.authStore.SigningKey()},
 	}
 	mux.Handle("/solid/", solidSrv)
 

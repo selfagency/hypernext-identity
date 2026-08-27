@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -241,6 +242,34 @@ func TestDeleteMissingKey(t *testing.T) {
 func TestOpenInvalidPath(t *testing.T) {
 	if _, err := Open("/nonexistent-dir/test.db"); err == nil {
 		t.Fatal("expected error for invalid path")
+	}
+}
+
+// TestOpenFilePermissions verifies the DB file is owner-only (0600) and the
+// data directory is 0700, so the signing key and token hashes are not
+// world-readable.
+func TestOpenFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "identity.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat db: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("db perms = %o, want 600", perm)
+	}
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if perm := di.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("dir perms = %o, want 700", perm)
 	}
 }
 
