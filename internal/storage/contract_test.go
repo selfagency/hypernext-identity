@@ -51,6 +51,17 @@ func RunContractTests(t *testing.T, newBackend func() Backend) {
 		}
 	})
 
+	t.Run("delete missing key is idempotent or ErrNotFound", func(t *testing.T) {
+		b := newBackend()
+		// FS returns ErrNotFound for a missing delete; S3 is idempotent
+		// (returns nil). Both are valid — the contract is that a missing
+		// delete does not error fatally.
+		err := b.Delete(context.Background(), "never-existed.txt")
+		if err != nil && err != ErrNotFound {
+			t.Fatalf("delete missing = %v, want nil or ErrNotFound", err)
+		}
+	})
+
 	t.Run("get missing key returns error", func(t *testing.T) {
 		b := newBackend()
 		if _, _, err := b.Get(context.Background(), "nope.txt"); err == nil {
