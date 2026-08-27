@@ -11,16 +11,9 @@ import (
 	"github.com/hypernext/identity/internal/store"
 )
 
-// testServer is a running server instance bound to a real TCP socket.
-type testServer struct {
-	baseURL string
-	srv     *Server
-	done    chan error
-}
-
-// startTestServer boots a real server on a random localhost port and returns
-// a handle. It seeds a tenant so the tenant middleware resolves the host.
-func startTestServer(t *testing.T, cfg *Config, seedTenant bool) *testServer {
+// fillDefaults applies test defaults to a config so callers can pass a
+// minimal &Config{}.
+func fillDefaults(t *testing.T, cfg *Config) {
 	t.Helper()
 	if cfg.DataDir == "" {
 		cfg.DataDir = t.TempDir()
@@ -40,6 +33,20 @@ func startTestServer(t *testing.T, cfg *Config, seedTenant bool) *testServer {
 	if cfg.Log.Format == "" {
 		cfg.Log.Format = "text"
 	}
+}
+
+// testServer is a running server instance bound to a real TCP socket.
+type testServer struct {
+	baseURL string
+	srv     *Server
+	done    chan error
+}
+
+// startTestServer boots a real server on a random localhost port and returns
+// a handle. It seeds a tenant so the tenant middleware resolves the host.
+func startTestServer(t *testing.T, cfg *Config, seedTenant bool) *testServer {
+	t.Helper()
+	fillDefaults(t, cfg)
 
 	srv, err := New(cfg)
 	if err != nil {

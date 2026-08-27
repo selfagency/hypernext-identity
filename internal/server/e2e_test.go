@@ -122,3 +122,61 @@ func TestE2EGracefulShutdown(t *testing.T) {
 		t.Fatal("server did not shut down cleanly")
 	}
 }
+
+// TestRunListenError verifies Run returns an error when the address is
+// already in use (the net.Listen error path).
+func TestRunListenError(t *testing.T) {
+	cfg := &Config{}
+	cfg.DataDir = t.TempDir()
+	cfg.Domain = "example.com"
+	cfg.Storage.Backend = "fs"
+	cfg.SQLite.Mode = "single"
+	cfg.Log.Level = "info"
+	cfg.Log.Format = "text"
+
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	// Occupy a port, then try to Run on it -> listen error.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	if err := srv.Run(context.Background(), ln.Addr().String()); err == nil {
+		t.Fatal("expected listen error on occupied port")
+	}
+}
+
+// TestServeServeError verifies Serve returns a non-ErrServerClosed error
+// when the listener fails after accept.
+func TestServeServeError(t *testing.T) {
+	cfg := &Config{}
+	cfg.DataDir = t.TempDir()
+	cfg.Domain = "example.com"
+	cfg.Storage.Backend = "fs"
+	cfg.SQLite.Mode = "single"
+	cfg.Log.Level = "info"
+	cfg.Log.Format = "text"
+
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	// A closed listener makes Serve return an error immediately.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ln.Close()
+
+	if err := srv.Serve(context.Background(), ln); err == nil {
+		t.Fatal("expected error on closed listener")
+	}
+}
