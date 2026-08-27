@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -75,6 +77,15 @@ type Scheduler struct {
 	// BackupFn produces the backup bytes. The storage phase wires a real
 	// implementation; the interface keeps the scheduler testable.
 	BackupFn func(ctx context.Context) (io.Reader, error)
+	// Logger receives backup failures (nil disables logging).
+	Logger *slog.Logger
+	// mu guards the status fields below.
+	mu sync.Mutex
+	// LastRun is the time of the most recent backup attempt.
+	LastRun time.Time
+	// LastError is the error from the most recent failed backup, or "" if
+	// the last backup succeeded.
+	LastError string
 }
 
 // NewScheduler builds a scheduler for a config.
@@ -84,6 +95,13 @@ func NewScheduler(config Config, backupFn func(ctx context.Context) (io.Reader, 
 		config:   config,
 		BackupFn: backupFn,
 	}
+}
+
+// Status returns the last backup attempt time and error (thread-safe).
+func (s *Scheduler) Status() (lastRun time.Time, lastError string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.LastRun, s.LastError
 }
 
 // Start registers the backup job and starts the cron loop.
@@ -106,17 +124,43 @@ func (s *Scheduler) Stop() {
 	s.cron.Stop()
 }
 
-// runBackup executes a single backup.
+// runBackup executes a single backup. Failures are logged and surfaced via
+// Status() so the admin UI can report them (previously they were swallowed).
 func (s *Scheduler) runBackup() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+
+	s.mu.Lock()
+	s.LastRun = time.Now().UTC()
+	s.mu.Unlock()
+
 	if s.BackupFn == nil {
+		s.failError("backup: no backup function configured")
 		return
 	}
 	r, err := s.BackupFn(ctx)
 	if err != nil {
+		s.failError(fmt.Sprintf("backup: produce: %v", err))
 		return
 	}
 	name := "backup-" + time.Now().UTC().Format("20060102-150405") + ".tar.gz"
-	_, _ = s.config.Destination.WriteBackup(ctx, name, r)
+	if _, err := s.config.Destination.WriteBackup(ctx, name, r); err != nil {
+		s.failError(fmt.Sprintf("backup: write: %v", err))
+		return
+	}
+
+	// Success: clear the last error.
+	s.mu.Lock()
+	s.LastError = ""
+	s.mu.Unlock()
+}
+
+// failError records a backup failure and logs it.
+func (s *Scheduler) failError(msg string) {
+	s.mu.Lock()
+	s.LastError = msg
+	s.mu.Unlock()
+	if s.Logger != nil {
+		s.Logger.Error(msg)
+	}
 }

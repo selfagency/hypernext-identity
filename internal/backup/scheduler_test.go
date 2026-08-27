@@ -2,7 +2,9 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -124,4 +126,106 @@ func TestSchedulerBackupFnNil(t *testing.T) {
 	defer s.Stop()
 	// Should not panic; wait briefly.
 	time.Sleep(100 * time.Millisecond)
+}
+
+// TestRunBackupErrorSurfaced verifies a BackupFn error is surfaced via
+// Status() and logged (previously swallowed silently).
+func TestRunBackupErrorSurfaced(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	s := NewScheduler(Config{
+		Schedule:    "* * * * * *",
+		Destination: &FSDestination{Backend: fs, Prefix: "backups"},
+	}, func(ctx context.Context) (io.Reader, error) {
+		return nil, errors.New("disk full")
+	})
+
+	var logged string
+	s.Logger = slog.New(slog.NewTextHandler(&logWriter{&logged}, nil))
+
+	s.runBackup()
+
+	lastRun, lastErr := s.Status()
+	if lastRun.IsZero() {
+		t.Fatal("LastRun not set")
+	}
+	if !strings.Contains(lastErr, "disk full") {
+		t.Fatalf("LastError = %q, want disk full", lastErr)
+	}
+	if !strings.Contains(logged, "disk full") {
+		t.Fatalf("log = %q, want disk full", logged)
+	}
+}
+
+// TestRunBackupWriteErrorSurfaced verifies a destination write error is
+// surfaced via Status() and logged.
+func TestRunBackupWriteErrorSurfaced(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	s := &Scheduler{
+		config: Config{
+			Schedule:    "* * * * * *",
+			Destination: &FSDestination{Backend: fs, Prefix: "backups"},
+		},
+		BackupFn: func(ctx context.Context) (io.Reader, error) {
+			return strings.NewReader("data"), nil
+		},
+	}
+
+	// A failing destination.
+	s.config.Destination = &failingDestination{}
+
+	var log string
+	s.Logger = slog.New(slog.NewTextHandler(&logWriter{&log}, nil))
+
+	s.runBackup()
+
+	_, lastErr := s.Status()
+	if !strings.Contains(lastErr, "write") {
+		t.Fatalf("LastError = %q, want write error", lastErr)
+	}
+	if !strings.Contains(log, "write") {
+		t.Fatalf("log = %q, want write error", log)
+	}
+}
+
+// TestRunBackupSuccessClearsError verifies a successful backup clears the
+// last error.
+func TestRunBackupSuccessClearsError(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	s := &Scheduler{
+		config: Config{
+			Destination: &FSDestination{Backend: fs, Prefix: "backups"},
+		},
+		BackupFn: func(ctx context.Context) (io.Reader, error) {
+			return strings.NewReader("data"), nil
+		},
+	}
+
+	// Simulate a prior failure.
+	s.mu.Lock()
+	s.LastError = "old error"
+	s.mu.Unlock()
+
+	s.runBackup()
+
+	_, lastErr := s.Status()
+	if lastErr != "" {
+		t.Fatalf("LastError = %q, want cleared", lastErr)
+	}
+}
+
+// failingDestination always fails writes.
+type failingDestination struct{}
+
+func (failingDestination) WriteBackup(ctx context.Context, name string, r io.Reader) (string, error) {
+	return "", errors.New("destination unreachable")
+}
+
+// logWriter captures slog output.
+type logWriter struct {
+	buf *string
+}
+
+func (w *logWriter) Write(p []byte) (int, error) {
+	*w.buf += string(p)
+	return len(p), nil
 }

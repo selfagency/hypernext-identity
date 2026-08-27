@@ -1,0 +1,65 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"testing"
+
+	"github.com/hypernext/identity/internal/storage"
+)
+
+// failingBackend is a storage.Backend that fails all operations. It injects
+// faults to verify handlers return 500 (not panic) when storage fails.
+type failingBackend struct{}
+
+func (failingBackend) Put(ctx context.Context, key string, r io.Reader, contentType string) (storage.Blob, error) {
+	return storage.Blob{}, errors.New("storage: disk full")
+}
+
+func (failingBackend) Get(ctx context.Context, key string) (io.ReadCloser, storage.Blob, error) {
+	return nil, storage.Blob{}, errors.New("storage: disk full")
+}
+
+func (failingBackend) Delete(ctx context.Context, key string) error {
+	return errors.New("storage: disk full")
+}
+
+func (failingBackend) List(ctx context.Context, prefix string) ([]storage.Blob, error) {
+	return nil, errors.New("storage: disk full")
+}
+
+// TestE2EFaultInjection verifies the server returns 500 (not panic) when the
+// storage backend fails mid-request. This is the chaos-engineering baseline:
+// a failing dependency must not crash the server.
+func TestE2EFaultInjection(t *testing.T) {
+	ts := startTestServer(t, &Config{}, true)
+
+	// Replace the blob backend with a failing one.
+	ts.srv.blobs = failingBackend{}
+
+	// Persist a token so authorization passes; the failure is in storage.
+	token := "tok"
+	if err := ts.srv.authStore.PersistRefreshToken(context.Background(), token, "alice", "client1", []string{"rw"}); err != nil {
+		t.Fatalf("persist token: %v", err)
+	}
+
+	// remoteStorage PUT -> 500 (storage error), not panic.
+	code, _ := ts.do(t, http.MethodPut, "/rs/docs/x", "alice.example.com", token, "text/plain", []byte("data"))
+	if code != http.StatusInternalServerError {
+		t.Fatalf("rs PUT with failing backend = %d, want 500", code)
+	}
+
+	// remoteStorage GET -> 404 (Get error maps to not-found), not panic.
+	code, _ = ts.do(t, http.MethodGet, "/rs/docs/x", "alice.example.com", token, "", nil)
+	if code != http.StatusNotFound {
+		t.Fatalf("rs GET with failing backend = %d, want 404", code)
+	}
+
+	// Solid PUT -> 500 (storage error), not panic.
+	code, _ = ts.do(t, http.MethodPut, "/solid/docs/x", "alice.example.com", token, "text/turtle", []byte("data"))
+	if code != http.StatusInternalServerError {
+		t.Fatalf("solid PUT with failing backend = %d, want 500", code)
+	}
+}
