@@ -68,6 +68,19 @@ func (s *Server) Close() error {
 	return s.store.Close()
 }
 
+// newS3Backend is a package-level hook so tests can stub the S3 constructor
+// (which does a live bucket probe).
+var newS3Backend = func(cfg *Config) (storage.Backend, error) {
+	s3 := cfg.Storage.S3
+	return storage.NewS3(&storage.S3Config{
+		Endpoint:  s3.Endpoint,
+		Bucket:    s3.Bucket,
+		AccessKey: s3.AccessKey,
+		SecretKey: s3.SecretKey,
+		Region:    s3.Region,
+	})
+}
+
 // buildBlobBackend constructs the FS or S3 storage backend.
 func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error) {
 	switch cfg.Storage.Backend {
@@ -77,14 +90,7 @@ func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error)
 		if cfg.Storage.S3 == nil {
 			return nil, fmt.Errorf("config: storage.s3 is required when backend=s3")
 		}
-		s3 := cfg.Storage.S3
-		return storage.NewS3(&storage.S3Config{
-			Endpoint:  s3.Endpoint,
-			Bucket:    s3.Bucket,
-			AccessKey: s3.AccessKey,
-			SecretKey: s3.SecretKey,
-			Region:    s3.Region,
-		})
+		return newS3Backend(cfg)
 	default:
 		return nil, fmt.Errorf("config: unknown storage backend %q", cfg.Storage.Backend)
 	}

@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/hypernext/identity/internal/storage"
 )
 
 // writeConfig writes a test config file.
@@ -170,5 +174,84 @@ func TestStaticTenantStore(t *testing.T) {
 	// Unknown.
 	if _, err := ts.FindByHost(ctx, "evil.com"); err == nil {
 		t.Fatal("expected error for unknown host")
+	}
+}
+
+// TestBuildBlobBackendS3 verifies S3 backend construction (stubbed — the
+// real constructor does a live bucket probe).
+func TestBuildBlobBackendS3(t *testing.T) {
+	orig := newS3Backend
+	newS3Backend = func(cfg *Config) (storage.Backend, error) {
+		return &storage.FS{Root: t.TempDir()}, nil
+	}
+	defer func() { newS3Backend = orig }()
+
+	cfg := &Config{
+		Storage: StorageConfig{
+			Backend: "s3",
+			S3: &S3Config{
+				Endpoint: "s3.example.com", Bucket: "blobs",
+				AccessKey: "ak", SecretKey: "sk", Region: "us-east-1",
+			},
+		},
+	}
+	b, err := buildBlobBackend(cfg, newLogger(LogConfig{Level: "info"}))
+	if err != nil {
+		t.Fatalf("buildBlobBackend s3: %v", err)
+	}
+	if b == nil {
+		t.Fatal("nil backend")
+	}
+}
+
+// TestBuildBlobBackendS3MissingConfig verifies S3 without config errors.
+func TestBuildBlobBackendS3MissingConfig(t *testing.T) {
+	cfg := &Config{Storage: StorageConfig{Backend: "s3"}}
+	if _, err := buildBlobBackend(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil))); err == nil {
+		t.Fatal("expected error for s3 without config")
+	}
+}
+
+// TestBuildBlobBackendUnknown verifies an unknown backend errors.
+func TestBuildBlobBackendUnknown(t *testing.T) {
+	cfg := &Config{Storage: StorageConfig{Backend: "gcs"}}
+	if _, err := buildBlobBackend(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil))); err == nil {
+		t.Fatal("expected error for unknown backend")
+	}
+}
+
+// TestDidDocHandler verifies the DID doc endpoint.
+func TestDidDocHandler(t *testing.T) {
+	srv := &Server{}
+	req := httptest.NewRequest("GET", "/profile/", http.NoBody)
+	req.Host = "alice.example.com"
+	rec := httptest.NewRecorder()
+	srv.didDocHandler()(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "did:web:alice.example.com") {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
+// TestAtprotoHandler verifies the atproto XRPC stub.
+func TestAtprotoHandler(t *testing.T) {
+	srv := &Server{}
+	req := httptest.NewRequest("GET", "/xrpc/x", http.NoBody)
+	rec := httptest.NewRecorder()
+	srv.atprotoHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", rec.Code)
+	}
+}
+
+// TestNewLogger verifies logger level selection.
+func TestNewLogger(t *testing.T) {
+	for _, lvl := range []string{"debug", "warn", "error", "info"} {
+		lg := newLogger(LogConfig{Level: lvl})
+		if lg == nil {
+			t.Fatalf("nil logger for level %q", lvl)
+		}
 	}
 }
