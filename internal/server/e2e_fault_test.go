@@ -9,6 +9,7 @@ import (
 
 	"github.com/hypernext/identity/internal/auth"
 	"github.com/hypernext/identity/internal/storage"
+	"github.com/hypernext/identity/internal/store"
 )
 
 // failingBackend is a storage.Backend that fails all operations. It injects
@@ -37,12 +38,21 @@ func (failingBackend) List(ctx context.Context, prefix string) ([]storage.Blob, 
 func TestE2EFaultInjection(t *testing.T) {
 	ts := startTestServer(t, &Config{}, true)
 
+	// Seed an account owned by alice so Solid's ownership check passes and
+	// the request reaches the (failing) storage backend.
+	if err := ts.srv.store.CreateAccount(context.Background(), &store.Account{
+		ID: "a1", TenantID: "t1", DID: "did:web:alice.example.com",
+		WebID: "https://alice.example.com/profile/card#me",
+	}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
 	// Replace the blob backend with a failing one.
 	ts.srv.blobs = failingBackend{}
 
 	// Mint a signed access token so authorization passes; the failure is in
 	// storage.
-	token, err := auth.MintAccessToken(ts.srv.authStore.SigningKey(), "alice", []string{"rw"}, auth.AccessTokenTTL)
+	token, err := auth.MintAccessToken(ts.srv.authStore.SigningKey(), "https://alice.example.com/profile/card#me", []string{"rw"}, auth.AccessTokenTTL)
 	if err != nil {
 		t.Fatalf("mint token: %v", err)
 	}

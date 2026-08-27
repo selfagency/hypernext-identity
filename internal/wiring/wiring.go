@@ -14,6 +14,7 @@ import (
 	"github.com/hypernext/identity/internal/protocols/remotestorage"
 	"github.com/hypernext/identity/internal/protocols/solid"
 	"github.com/hypernext/identity/internal/store"
+	"github.com/hypernext/identity/internal/tenant"
 )
 
 // TokenValidator validates bearer access tokens against the OIDC signing key.
@@ -68,21 +69,38 @@ type ACLChecker struct {
 	Store *store.Store
 }
 
-// CanRead reports whether agent may read resource. For now, the owner of a
-// tenant can read everything; the public agent can read published resources.
+// CanRead reports whether agent may read resource. Public reads are allowed
+// (the LDP subset serves published content); authenticated agents may read
+// their own tenant's resources.
 func (a *ACLChecker) CanRead(ctx context.Context, resource string, agent solid.Agent) bool {
 	if agent.WebID == "" {
-		// Public read is allowed for published content (default true for
-		// the LDP subset; a real ACL policy replaces this).
+		// Public read is allowed for published content.
 		return true
 	}
-	return true
+	return a.ownsTenant(ctx, agent.WebID)
 }
 
-// CanWrite reports whether agent may write resource. Only the tenant owner
-// can write.
+// CanWrite reports whether agent may write resource. Only an account whose
+// WebID resolves to the request's tenant may write.
 func (a *ACLChecker) CanWrite(ctx context.Context, resource string, agent solid.Agent) bool {
-	return agent.WebID != ""
+	if agent.WebID == "" {
+		return false
+	}
+	return a.ownsTenant(ctx, agent.WebID)
+}
+
+// ownsTenant reports whether the WebID resolves to an account in the tenant
+// carried by the request context.
+func (a *ACLChecker) ownsTenant(ctx context.Context, webID string) bool {
+	t, ok := tenant.FromContext(ctx)
+	if !ok {
+		return false
+	}
+	acct, err := a.Store.AccountByWebID(ctx, webID)
+	if err != nil {
+		return false
+	}
+	return acct.TenantID == t.ID
 }
 
 // Ensure ACLChecker satisfies solid.ACLChecker.

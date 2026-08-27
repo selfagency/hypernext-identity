@@ -33,6 +33,7 @@ func TestKeysEndpoint(t *testing.T) {
 
 	h := &KeysHandler{Store: s}
 	req := httptest.NewRequest("GET", "/alice.example.com.keys", http.NoBody)
+	req.Host = "alice.example.com"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -48,6 +49,29 @@ func TestKeysEndpoint(t *testing.T) {
 	}
 }
 
+// TestKeysEndpointHostMismatch verifies the keys handler serves only the
+// host-derived tenant, not a tenant named in the URL path (C4). Requesting
+// /victim.keys on attacker.example.com must not serve victim's keys.
+func TestKeysEndpointHostMismatch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.CreatePublicKey(ctx, &store.PublicKey{ID: "k1", TenantID: "victim.example.com", AccountID: "a1", KeyType: "ssh", Fingerprint: "fp1", KeyMaterial: "ssh-ed25519 VICTIM"})
+
+	h := &KeysHandler{Store: s}
+	// Request /victim.keys but on attacker.example.com host.
+	req := httptest.NewRequest("GET", "/victim.example.com.keys", http.NoBody)
+	req.Host = "attacker.example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "VICTIM") {
+		t.Fatalf("served victim's key on attacker host: %q", rec.Body.String())
+	}
+}
+
 // TestGPGEndpoint verifies .gpg serves PGP keys.
 func TestGPGEndpoint(t *testing.T) {
 	s := newTestStore(t)
@@ -56,6 +80,7 @@ func TestGPGEndpoint(t *testing.T) {
 
 	h := &KeysHandler{Store: s}
 	req := httptest.NewRequest("GET", "/alice.example.com.gpg", http.NoBody)
+	req.Host = "alice.example.com"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
