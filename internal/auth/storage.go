@@ -141,6 +141,16 @@ func NewMemoryStore() (*MemoryStore, error) {
 // AddUser registers a user.
 func (s *MemoryStore) AddUser(u *User) { s.users[u.ID] = u }
 
+// SetSigningKey replaces the signing key (used to restore a persisted key).
+func (s *MemoryStore) SetSigningKey(priv any) {
+	s.signing = &signingKey{id: "signing-1", key: priv}
+}
+
+// SigningKeyMaterial returns the raw signing key material.
+func (s *MemoryStore) SigningKeyMaterial() any {
+	return s.signing.key
+}
+
 // AddClient registers an OIDC client.
 func (s *MemoryStore) AddClient(c *Client) { s.clients[c.ID] = c }
 

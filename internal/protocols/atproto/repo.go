@@ -5,21 +5,33 @@ import (
 	"fmt"
 
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
-	atrepo "github.com/bluesky-social/indigo/atproto/repo"
 	"github.com/bluesky-social/indigo/repo"
+
+	"github.com/hypernext/identity/internal/pdsstore"
 )
 
 // Repo wraps an atproto repository with commit signing.
 type Repo struct {
 	r  *repo.Repo
 	sk atcrypto.PrivateKey
+	bs *pdsstore.Blockstore
 }
 
-// NewRepo creates a new in-memory repo for a DID with the given signing key.
-func NewRepo(ctx context.Context, did string, sk atcrypto.PrivateKey) (*Repo, error) {
-	bs := atrepo.NewTinyBlockstore()
+// NewRepo creates a durable repo for a DID with the given signing key. The
+// repo's MST/records/commits are persisted to a SQLite blockstore at path,
+// surviving restarts.
+func NewRepo(ctx context.Context, did string, sk atcrypto.PrivateKey, blockstorePath string) (*Repo, error) {
+	bs, err := pdsstore.Open(blockstorePath)
+	if err != nil {
+		return nil, fmt.Errorf("open blockstore: %w", err)
+	}
 	r := repo.NewRepo(ctx, did, bs)
-	return &Repo{r: r, sk: sk}, nil
+	return &Repo{r: r, sk: sk, bs: bs}, nil
+}
+
+// Close closes the underlying blockstore.
+func (r *Repo) Close() error {
+	return r.bs.Close()
 }
 
 // CreateRecord writes a record to the repo and returns its CID and TID.

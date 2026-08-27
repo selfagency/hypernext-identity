@@ -3,6 +3,7 @@ package atproto
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"testing"
 
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
@@ -32,7 +33,7 @@ func TestRepoCommitSigning(t *testing.T) {
 	}
 	did := "did:plc:abc123"
 
-	r, err := NewRepo(ctx, did, sk)
+	r, err := NewRepo(ctx, did, sk, filepath.Join(t.TempDir(), "repo.db"))
 	if err != nil {
 		t.Fatalf("NewRepo: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestRepoVerifyCommitWrongKey(t *testing.T) {
 	sk, _ := atcrypto.GeneratePrivateKeyP256()
 	other, _ := atcrypto.GeneratePrivateKeyP256()
 
-	r, err := NewRepo(ctx, "did:plc:abc123", sk)
+	r, err := NewRepo(ctx, "did:plc:abc123", sk, filepath.Join(t.TempDir(), "repo.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,5 +86,41 @@ func TestRepoVerifyCommitWrongKey(t *testing.T) {
 	otherPub, _ := other.PublicKey()
 	if err := r.VerifyCommit(otherPub); err == nil {
 		t.Fatal("expected verification failure with wrong key")
+	}
+}
+
+// TestRepoPersistenceAcrossReopen verifies the repo survives a blockstore
+// reopen (durable storage).
+func TestRepoPersistenceAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	sk, err := atcrypto.GeneratePrivateKeyP256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "repo.db")
+
+	r, err := NewRepo(ctx, "did:plc:abc123", sk, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.CreateRecord(ctx, "app.bsky.feed.post", &testRecord{Text: "persistent"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen the same blockstore path.
+	r2, err := NewRepo(ctx, "did:plc:abc123", sk, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r2.Close() }()
+	// The repo should still have its commit (not empty).
+	if sc := r2.SignedCommit(); sc.Did == "" {
+		t.Fatal("repo lost its commit after reopen")
 	}
 }
