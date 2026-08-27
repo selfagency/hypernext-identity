@@ -1,0 +1,7 @@
+# Codacy configuration.
+# Exclude AGENTS.md from static analysis: it is an agent-guidance document,
+# not code, and Codacy's doc-quality rules (acronyms, vague instructions,
+# absolute rules) flag it heavily. The file is intentionally terse prose.
+exclude_paths:
+  - "AGENTS.md"
+  - "AGENTS.original.md"
