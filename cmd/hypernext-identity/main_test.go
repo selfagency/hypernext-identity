@@ -5,20 +5,24 @@ import (
 	"testing"
 )
 
-// TestRunNoArgs verifies run() succeeds with no arguments (skeleton CLI).
-func TestRunNoArgs(t *testing.T) {
-	if err := run(nil); err != nil {
-		t.Fatalf("run(nil) = %v, want nil", err)
-	}
-	if err := run([]string{}); err != nil {
-		t.Fatalf("run([]) = %v, want nil", err)
+// TestRunHelp verifies run() succeeds with --help.
+func TestRunHelp(t *testing.T) {
+	if err := run([]string{"--help"}); err != nil {
+		t.Fatalf("run(--help) = %v, want nil", err)
 	}
 }
 
-// TestRunMainNoArgs verifies runMain returns 0 with no arguments.
-func TestRunMainNoArgs(t *testing.T) {
-	if code := runMain(nil); code != 0 {
-		t.Fatalf("runMain(nil) = %d, want 0", code)
+// TestRunMissingConfig verifies run() errors when the config file is missing.
+func TestRunMissingConfig(t *testing.T) {
+	if err := run([]string{"--config", "/nonexistent/config.yml"}); err == nil {
+		t.Fatal("expected error for missing config")
+	}
+}
+
+// TestRunMainHelp verifies runMain returns 0 with --help.
+func TestRunMainHelp(t *testing.T) {
+	if code := runMain([]string{"--help"}); code != 0 {
+		t.Fatalf("runMain(--help) = %d, want 0", code)
 	}
 }
 
