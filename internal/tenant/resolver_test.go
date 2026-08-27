@@ -65,3 +65,15 @@ func TestFromContext_EmptyContext(t *testing.T) {
 		t.Fatal("expected no tenant in empty context")
 	}
 }
+
+func TestWithTenant_RoundTrip(t *testing.T) {
+	tn := &Tenant{ID: "t1", Handle: "alice.example.com"}
+	ctx := WithTenant(context.Background(), tn)
+	got, ok := FromContext(ctx)
+	if !ok {
+		t.Fatal("expected tenant in context")
+	}
+	if got.ID != "t1" || got.Handle != "alice.example.com" {
+		t.Fatalf("tenant = %+v", got)
+	}
+}
