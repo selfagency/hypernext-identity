@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // mintAccessToken signs a short-lived access token for the given subject and

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/hypernext/identity/internal/backup"
+	"github.com/selfagency/sovereign/internal/backup"
 )
 
 // BackupConfig is the admin-facing backup configuration form.

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // Server is the Solid LDP HTTP handler.

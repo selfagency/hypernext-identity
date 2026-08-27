@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // fillDefaults applies test defaults to a config so callers can pass a

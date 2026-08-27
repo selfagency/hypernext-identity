@@ -12,7 +12,7 @@ import (
 // usage. https://nodeinfo.diaspora.software/protocol.html
 func TestSpecConformanceNodeInfo(t *testing.T) {
 	h := Handler(Config{
-		SoftwareName:      "hypernext-identity",
+		SoftwareName:      "sovereign",
 		SoftwareVersion:   "0.1.0",
 		Protocols:         []string{"solid", "remotestorage", "atproto"},
 		OpenRegistrations: false,
@@ -54,7 +54,7 @@ func assertNodeInfoSoftware(t *testing.T, raw map[string]any) {
 	if !ok {
 		t.Fatalf("software not an object: %v", raw["software"])
 	}
-	if software["name"] != "hypernext-identity" || software["version"] != "0.1.0" {
+	if software["name"] != "sovereign" || software["version"] != "0.1.0" {
 		t.Fatalf("software = %v", software)
 	}
 }

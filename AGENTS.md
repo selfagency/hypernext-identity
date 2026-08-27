@@ -1,4 +1,4 @@
-# AGENTS.md — Hypernext Identity Server
+# AGENTS.md — Sovereign
 
 Guidance for AI agents (and humans) working in this repo. Read this before
 making changes. When in doubt, prefer pattern already used elsewhere in
@@ -7,12 +7,12 @@ making changes. When in doubt, prefer pattern already used elsewhere in
 ## What this project is
 
 Single-binary Go server that owns **identity, auth, storage, protocol
-adapters, and personal data** for Hypernext tenants. It is deliberately
-separate from `hypernext-server` (the TypeScript content/publishing server).
+adapters, and personal data** for Sovereign tenants. It is a self-contained
+project; `hypernext` is a separate service that interacts with Sovereign.
 Do not add publishing/federation-timeline features here — see "Out of
 scope" below.
 
-- Module: `github.com/hypernext/identity`
+- Module: `github.com/selfagency/sovereign`
 - Go: 1.27, `CGO_ENABLED=0` always (pure-Go SQLite via `modernc.org/sqlite`)
 - License: GPL-3.0-or-later — new files need no header, but new
   dependencies must be compatible (see Licensing)
@@ -22,7 +22,7 @@ scope" below.
 ## Repo layout
 
 ```
-cmd/hypernext-identity/   main() — cobra CLI entrypoint
+cmd/sovereign/   main() — cobra CLI entrypoint
 internal/
   server/                 HTTP server assembly, router wiring, config
   store/                  SQLite persistence (accounts, tenants, keys, proofs, profile)
@@ -51,7 +51,7 @@ signature verification only — NOT full AP server), `atproto` (XRPC/PDS),
 Keep this boundary. If change starts to implement full ActivityPub
 federation, Matrix/XMPP/IRC server, embedded IPFS node, weblog/pastebin/
 statuslog content, or smart-contract/gas logic — stop and flag it; that
-belongs in `hypernext-server` or was explicitly rejected. See project
+belongs in `hypernext` or was explicitly rejected. See project
 memory / addendum docs for full accepted/rejected list (Web3 did:pkh +
 SIWE + ENS yes; did:ethr, Solana/Bitcoin did:pkh, Ceramic, Arweave/Filecoin,
 smart contracts no; OIDC-as-upstream-IdP for Matrix/XMPP yes; IRC deferred;
@@ -120,7 +120,7 @@ task lint     # golangci-lint run ./...  (gofumpt, gci, staticcheck, gosec, revi
 task test     # go test ./... -race -cover
 task vet      # go vet ./...
 task vulncheck# govulncheck
-task build    # CGO_ENABLED=0 go build -o hypernext-identity ./cmd/hypernext-identity
+task build    # CGO_ENABLED=0 go build -o sovereign ./cmd/sovereign
 task fmt      # golangci-lint run --fix ./...
 task hooks    # pre-commit run --all-files
 ```

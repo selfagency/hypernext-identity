@@ -13,22 +13,22 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/authstore"
-	"github.com/hypernext/identity/internal/endpoints"
-	"github.com/hypernext/identity/internal/protocols/activitypub"
-	"github.com/hypernext/identity/internal/protocols/atproto"
-	"github.com/hypernext/identity/internal/protocols/indieauth"
-	"github.com/hypernext/identity/internal/protocols/ipfspin"
-	"github.com/hypernext/identity/internal/protocols/nodeinfo"
-	"github.com/hypernext/identity/internal/protocols/remotestorage"
-	"github.com/hypernext/identity/internal/protocols/solid"
-	"github.com/hypernext/identity/internal/protocols/webfinger"
-	"github.com/hypernext/identity/internal/protocols/wellknown"
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/store"
-	"github.com/hypernext/identity/internal/tenant"
-	"github.com/hypernext/identity/internal/wiring"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/authstore"
+	"github.com/selfagency/sovereign/internal/endpoints"
+	"github.com/selfagency/sovereign/internal/protocols/activitypub"
+	"github.com/selfagency/sovereign/internal/protocols/atproto"
+	"github.com/selfagency/sovereign/internal/protocols/indieauth"
+	"github.com/selfagency/sovereign/internal/protocols/ipfspin"
+	"github.com/selfagency/sovereign/internal/protocols/nodeinfo"
+	"github.com/selfagency/sovereign/internal/protocols/remotestorage"
+	"github.com/selfagency/sovereign/internal/protocols/solid"
+	"github.com/selfagency/sovereign/internal/protocols/webfinger"
+	"github.com/selfagency/sovereign/internal/protocols/wellknown"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/store"
+	"github.com/selfagency/sovereign/internal/tenant"
+	"github.com/selfagency/sovereign/internal/wiring"
 )
 
 // Server is the assembled identity server.
@@ -149,7 +149,7 @@ func (s *Server) buildRouter() {
 
 	// NodeInfo.
 	ni := nodeinfo.Handler(nodeinfo.Config{
-		SoftwareName:      "hypernext-identity",
+		SoftwareName:      "sovereign",
 		SoftwareVersion:   "0.1.0",
 		Protocols:         []string{"solid", "remotestorage", "atproto"},
 		OpenRegistrations: false,

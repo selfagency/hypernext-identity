@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // XRPCServer serves atproto XRPC endpoints (com.atproto.*) for the tenant

@@ -66,7 +66,7 @@ jobs:
       # so Codacy can map coverage to tracked files.
       - name: Normalize coverage paths
         if: always()
-        run: sed -i 's|github.com/hypernext/identity/||' coverage.out
+        run: sed -i 's|github.com/selfagency/sovereign/||' coverage.out
 
       - name: Upload coverage to Codacy
         if: always()
@@ -100,5 +100,5 @@ jobs:
       - name: Static build
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -o dist/hypernext-identity-${{ matrix.goos }}-${{ matrix.goarch }} \
-            ./cmd/hypernext-identity
+            go build -o dist/sovereign-${{ matrix.goos }}-${{ matrix.goarch }} \
+            ./cmd/sovereign

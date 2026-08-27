@@ -7,7 +7,7 @@ import (
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
 	"github.com/bluesky-social/indigo/repo"
 
-	"github.com/hypernext/identity/internal/pdsstore"
+	"github.com/selfagency/sovereign/internal/pdsstore"
 )
 
 // Repo wraps an atproto repository with commit signing.

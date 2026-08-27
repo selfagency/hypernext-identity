@@ -1,5 +1,5 @@
 // Package chatfederation implements the identity normalization shared by
-// Matrix and XMPP federation. Hypernext acts as an upstream OIDC provider
+// Matrix and XMPP federation. Sovereign acts as an upstream OIDC provider
 // that Matrix's MAS and Prosody's mod_auth_oauth_external delegate to; the
 // only new code is producing a username/localpart-safe claim that is valid
 // as both a Matrix localpart and an RFC 7622 XMPP JID node.

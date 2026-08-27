@@ -63,4 +63,4 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/hypernext/identity)
+        - prefix(github.com/selfagency/sovereign)

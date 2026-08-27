@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // newTestStore opens an in-memory SQLite store.

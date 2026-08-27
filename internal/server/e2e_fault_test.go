@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // failingBackend is a storage.Backend that fails all operations. It injects

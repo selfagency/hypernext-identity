@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // withTenant wraps a request context with a tenant.

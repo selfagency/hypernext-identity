@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // TestSpecConformanceResolveHandle verifies com.atproto.identity.resolveHandle

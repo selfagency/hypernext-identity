@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // fakeACL grants access based on a map of allowed agents per resource.

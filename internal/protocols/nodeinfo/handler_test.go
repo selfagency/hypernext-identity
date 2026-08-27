@@ -9,7 +9,7 @@ import (
 
 func testConfig() Config {
 	return Config{
-		SoftwareName:      "hypernext-identity",
+		SoftwareName:      "sovereign",
 		SoftwareVersion:   "0.1.0",
 		Protocols:         []string{"activitypub", "atproto"},
 		OpenRegistrations: true,
@@ -37,7 +37,7 @@ func TestHandlerServesNodeInfo(t *testing.T) {
 	if doc.Version != "2.1" {
 		t.Fatalf("version = %q, want 2.1", doc.Version)
 	}
-	if doc.Software.Name != "hypernext-identity" {
+	if doc.Software.Name != "sovereign" {
 		t.Fatalf("software name = %q", doc.Software.Name)
 	}
 	if len(doc.Protocols) != 2 || doc.Protocols[0] != "activitypub" {

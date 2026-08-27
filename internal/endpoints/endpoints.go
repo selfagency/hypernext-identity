@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // KeysHandler serves the public key endpoints.
