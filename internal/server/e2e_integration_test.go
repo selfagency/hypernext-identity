@@ -6,24 +6,34 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hypernext/identity/internal/auth"
 	"github.com/hypernext/identity/internal/store"
 )
 
+// mintAccessToken signs a short-lived access token for the given subject and
+// scopes using the server's auth signing key.
+func mintAccessToken(t *testing.T, ts *testServer, subject string, scopes []string) string {
+	t.Helper()
+	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKey(), subject, scopes, auth.AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	return tok
+}
+
 // TestE2ECrossProtocolFlow verifies the full wiring works together over real
-// HTTP: a persisted OIDC token authorizes remoteStorage writes/reads, and the
+// HTTP: a signed access token authorizes remoteStorage writes/reads, and the
 // same token authorizes Solid LDP writes/reads. This proves the protocol
 // handlers, the wiring TokenValidator, and the blob backend cooperate.
 func TestE2ECrossProtocolFlow(t *testing.T) {
 	ts := startTestServer(t, &Config{}, true)
 
-	// Persist an OIDC refresh token with remoteStorage rw scope. This is the
-	// token the wiring TokenValidator resolves (it reads persisted refresh
-	// tokens). In production this token is minted by the OIDC provider; here
-	// we seed it directly to exercise the authorization path end-to-end.
-	token := "oidc-token-1"
-	if err := ts.srv.authStore.PersistRefreshToken(context.Background(), token, "alice", "client1", []string{"rw"}); err != nil {
-		t.Fatalf("persist token: %v", err)
-	}
+	// Mint a signed access token with remoteStorage rw scope. This is the
+	// token the wiring TokenValidator validates (it verifies the JWT
+	// signature + expiry). In production this token is minted by the OIDC
+	// provider; here we mint it directly to exercise the authorization path
+	// end-to-end.
+	token := mintAccessToken(t, ts, "alice", []string{"rw"})
 
 	// 1. remoteStorage PUT (requires rw scope).
 	code, _ := ts.do(t, http.MethodPut, "/rs/docs/hello.txt", "alice.example.com", token, "text/plain", []byte("hello world"))
@@ -63,10 +73,7 @@ func TestE2ECrossProtocolFlow(t *testing.T) {
 	}
 
 	// 6. Forbidden: token without write scope cannot PUT.
-	readOnly := "readonly-token"
-	if err := ts.srv.authStore.PersistRefreshToken(context.Background(), readOnly, "alice", "client1", []string{"r"}); err != nil {
-		t.Fatalf("persist read-only token: %v", err)
-	}
+	readOnly := mintAccessToken(t, ts, "alice", []string{"r"})
 	code, _ = ts.do(t, http.MethodPut, "/rs/docs/other.txt", "alice.example.com", readOnly, "text/plain", []byte("x"))
 	if code != http.StatusForbidden {
 		t.Fatalf("rs PUT read-only = %d, want 403", code)
@@ -84,10 +91,7 @@ func TestE2EMultiTenantIsolation(t *testing.T) {
 	}
 
 	// Alice writes a blob.
-	aliceTok := "alice-token"
-	if err := ts.srv.authStore.PersistRefreshToken(context.Background(), aliceTok, "alice", "client1", []string{"rw"}); err != nil {
-		t.Fatalf("persist alice token: %v", err)
-	}
+	aliceTok := mintAccessToken(t, ts, "alice", []string{"rw"})
 	code, _ := ts.do(t, http.MethodPut, "/rs/docs/secret.txt", "alice.example.com", aliceTok, "text/plain", []byte("alice secret"))
 	if code != http.StatusOK {
 		t.Fatalf("alice PUT = %d, want 200", code)
@@ -96,10 +100,7 @@ func TestE2EMultiTenantIsolation(t *testing.T) {
 	// Bob tries to read Alice's blob via his own host. The blob backend is
 	// shared (backendFor returns the same backend for all tenants), so the
 	// key is the same path — this exposes the current isolation gap.
-	bobTok := "bob-token"
-	if err := ts.srv.authStore.PersistRefreshToken(context.Background(), bobTok, "bob", "client1", []string{"rw"}); err != nil {
-		t.Fatalf("persist bob token: %v", err)
-	}
+	bobTok := mintAccessToken(t, ts, "bob", []string{"rw"})
 	code, body := ts.do(t, http.MethodGet, "/rs/docs/secret.txt", "bob.example.com", bobTok, "", nil)
 	if code == http.StatusOK && strings.Contains(body, "alice secret") {
 		t.Fatalf("ISOLATION GAP: bob read alice's blob (status %d)", code)

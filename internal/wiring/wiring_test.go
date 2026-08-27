@@ -31,14 +31,39 @@ func newTestStores(t *testing.T) (st *store.Store, as *authstore.Store) {
 	return st, as
 }
 
-// TestTokenValidatorValid verifies a valid token returns scopes.
+// mintAccessToken signs a short-lived access token for the given subject and
+// scopes using the auth store's signing key.
+func mintAccessToken(t *testing.T, as *authstore.Store, subject string, scopes []string) string {
+	t.Helper()
+	tok, err := auth.MintAccessToken(as.SigningKey(), subject, scopes, auth.AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	return tok
+}
+
+// TestTokenValidatorRejectsRefreshToken verifies a refresh token is NOT
+// accepted as a bearer access token at resource endpoints. Token-type
+// separation: refresh tokens are only valid at the OIDC token endpoint.
+func TestTokenValidatorRejectsRefreshToken(t *testing.T) {
+	_, as := newTestStores(t)
+	ctx := context.Background()
+	_ = as.PersistRefreshToken(ctx, "refresh-tok", "alice", "client1", []string{"rw"})
+
+	v := &TokenValidator{Key: as.SigningKey()}
+	if _, err := v.ValidateToken(ctx, "refresh-tok"); err == nil {
+		t.Fatal("refresh token accepted as access token — token-type separation violated")
+	}
+}
+
+// TestTokenValidatorValid verifies a valid access token returns scopes.
 func TestTokenValidatorValid(t *testing.T) {
 	_, as := newTestStores(t)
 	ctx := context.Background()
-	_ = as.PersistRefreshToken(ctx, "tok1", "alice", "client1", []string{"openid", "profile"})
+	tok := mintAccessToken(t, as, "alice", []string{"openid", "profile"})
 
-	v := &TokenValidator{Auth: as}
-	scopes, err := v.ValidateToken(ctx, "tok1")
+	v := &TokenValidator{Key: as.SigningKey()}
+	scopes, err := v.ValidateToken(ctx, tok)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
 	}
@@ -50,7 +75,7 @@ func TestTokenValidatorValid(t *testing.T) {
 // TestTokenValidatorInvalid verifies an invalid token errors.
 func TestTokenValidatorInvalid(t *testing.T) {
 	_, as := newTestStores(t)
-	v := &TokenValidator{Auth: as}
+	v := &TokenValidator{Key: as.SigningKey()}
 	if _, err := v.ValidateToken(context.Background(), "bad"); err == nil {
 		t.Fatal("expected error for invalid token")
 	}
@@ -92,14 +117,14 @@ func TestScopesContains(t *testing.T) {
 	}
 }
 
-// TestSubjectValidatorValid verifies a valid token returns the subject.
+// TestSubjectValidatorValid verifies a valid access token returns the subject.
 func TestSubjectValidatorValid(t *testing.T) {
 	_, as := newTestStores(t)
 	ctx := context.Background()
-	_ = as.PersistRefreshToken(ctx, "tok1", "alice", "client1", []string{"rw"})
+	tok := mintAccessToken(t, as, "alice", []string{"rw"})
 
-	v := &SubjectValidator{Auth: as}
-	subject, err := v.ValidateToken(ctx, "tok1")
+	v := &SubjectValidator{Key: as.SigningKey()}
+	subject, err := v.ValidateToken(ctx, tok)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
 	}
@@ -111,7 +136,7 @@ func TestSubjectValidatorValid(t *testing.T) {
 // TestSubjectValidatorInvalid verifies invalid/empty tokens error.
 func TestSubjectValidatorInvalid(t *testing.T) {
 	_, as := newTestStores(t)
-	v := &SubjectValidator{Auth: as}
+	v := &SubjectValidator{Key: as.SigningKey()}
 	if _, err := v.ValidateToken(context.Background(), "bad"); err == nil {
 		t.Fatal("expected error for invalid token")
 	}

@@ -47,6 +47,12 @@ linters:
         linters:
           - revive
           - gocritic
+      # store.go chmods the data directory to 0700 (owner-only). G302 expects
+      # <=0600, but directories need the execute bit to be traversable; 0700
+      # is the correct owner-only directory mode.
+      - path: internal/store/store\.go
+        linters:
+          - gosec
 
 formatters:
   enable:

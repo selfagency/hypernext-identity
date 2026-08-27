@@ -6,56 +6,57 @@ package wiring
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"strings"
 
-	"github.com/hypernext/identity/internal/authstore"
+	"github.com/hypernext/identity/internal/auth"
 	"github.com/hypernext/identity/internal/protocols/remotestorage"
 	"github.com/hypernext/identity/internal/protocols/solid"
 	"github.com/hypernext/identity/internal/store"
 )
 
-// TokenValidator validates bearer tokens against the persisted auth store.
-// It implements remotestorage.TokenValidator.
+// TokenValidator validates bearer access tokens against the OIDC signing key.
+// It implements remotestorage.TokenValidator. Only short-lived signed access
+// tokens are accepted — refresh tokens are rejected (token-type separation).
 type TokenValidator struct {
-	Auth *authstore.Store
+	Key *rsa.PrivateKey
 }
 
-// ValidateToken returns the scopes for a bearer token, or an error if the
-// token is invalid. It resolves the token against the persisted refresh
-// tokens (which carry the subject + scopes).
+// ValidateToken returns the scopes for a bearer access token, or an error if
+// the token is invalid.
 func (v *TokenValidator) ValidateToken(ctx context.Context, token string) ([]string, error) {
 	if token == "" {
 		return nil, errors.New("wiring: empty token")
 	}
-	_, _, scopes, err := v.Auth.LoadRefreshToken(ctx, token)
+	claims, err := auth.ValidateAccessToken(v.Key, token)
 	if err != nil {
 		return nil, errors.New("wiring: invalid token")
 	}
-	return scopes, nil
+	return claims.Scopes, nil
 }
 
 // Ensure TokenValidator satisfies the interface.
 var _ remotestorage.TokenValidator = (*TokenValidator)(nil)
 
-// SubjectValidator validates a bearer token and returns the authenticated
-// subject. It implements solid.TokenValidator, deriving the agent's WebID
-// from the token's subject.
+// SubjectValidator validates a bearer access token and returns the
+// authenticated subject. It implements solid.TokenValidator, deriving the
+// agent's WebID from the token's subject.
 type SubjectValidator struct {
-	Auth *authstore.Store
+	Key *rsa.PrivateKey
 }
 
-// ValidateToken returns the subject for a bearer token, or an error if the
-// token is invalid.
+// ValidateToken returns the subject for a bearer access token, or an error if
+// the token is invalid.
 func (v *SubjectValidator) ValidateToken(ctx context.Context, token string) (string, error) {
 	if token == "" {
 		return "", errors.New("wiring: empty token")
 	}
-	subject, _, _, err := v.Auth.LoadRefreshToken(ctx, token)
+	claims, err := auth.ValidateAccessToken(v.Key, token)
 	if err != nil {
 		return "", errors.New("wiring: invalid token")
 	}
-	return subject, nil
+	return claims.Subject, nil
 }
 
 // Ensure SubjectValidator satisfies the interface.

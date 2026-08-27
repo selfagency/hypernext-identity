@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/hypernext/identity/internal/auth"
 	"github.com/hypernext/identity/internal/storage"
 )
 
@@ -39,10 +40,11 @@ func TestE2EFaultInjection(t *testing.T) {
 	// Replace the blob backend with a failing one.
 	ts.srv.blobs = failingBackend{}
 
-	// Persist a token so authorization passes; the failure is in storage.
-	token := "tok"
-	if err := ts.srv.authStore.PersistRefreshToken(context.Background(), token, "alice", "client1", []string{"rw"}); err != nil {
-		t.Fatalf("persist token: %v", err)
+	// Mint a signed access token so authorization passes; the failure is in
+	// storage.
+	token, err := auth.MintAccessToken(ts.srv.authStore.SigningKey(), "alice", []string{"rw"}, auth.AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("mint token: %v", err)
 	}
 
 	// remoteStorage PUT -> 500 (storage error), not panic.

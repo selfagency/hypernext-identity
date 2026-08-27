@@ -2,7 +2,9 @@ package authstore
 
 import (
 	"context"
-	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -35,7 +37,7 @@ func TestSigningKeyPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key1 := mem1.SigningKeyMaterial().(*rsa.PrivateKey)
+	key1 := mem1.SigningKeyMaterial()
 	as1, err := New(ctx, mem1, s1)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -58,10 +60,53 @@ func TestSigningKeyPersistence(t *testing.T) {
 		t.Fatalf("New reopen: %v", err)
 	}
 	_ = as2
-	key2 := mem2.SigningKeyMaterial().(*rsa.PrivateKey)
+	key2 := mem2.SigningKeyMaterial()
 	// Compare key material (N/D), not pointer identity.
 	if key1.N.Cmp(key2.N) != 0 || key1.D.Cmp(key2.D) != 0 {
 		t.Fatal("signing key changed across reopen — JWTs would break")
+	}
+}
+
+// TestRefreshTokenHashedAtRest verifies the raw refresh token is never stored
+// in the DB — only its SHA-256 hash. A DB read must not yield a replayable
+// credential.
+func TestRefreshTokenHashedAtRest(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	mem, err := auth.NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	as, err := New(ctx, mem, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw := "raw-refresh-token-123"
+	if err := as.PersistRefreshToken(ctx, raw, "alice", "client1", []string{"openid"}); err != nil {
+		t.Fatalf("PersistRefreshToken: %v", err)
+	}
+
+	// The raw token must not be retrievable from the DB.
+	if _, err := s.GetAuthRefreshToken(ctx, raw); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("raw token found in DB (err=%v), want ErrNotFound", err)
+	}
+
+	// The SHA-256 hash must be present and loadable.
+	sum := sha256.Sum256([]byte(raw))
+	hash := hex.EncodeToString(sum[:])
+	got, err := s.GetAuthRefreshToken(ctx, hash)
+	if err != nil {
+		t.Fatalf("hashed token not found: %v", err)
+	}
+	if got.Subject != "alice" {
+		t.Fatalf("subject = %q, want alice", got.Subject)
+	}
+
+	// LoadRefreshToken resolves the raw token via its hash.
+	subject, _, _, err := as.LoadRefreshToken(ctx, raw)
+	if err != nil || subject != "alice" {
+		t.Fatalf("LoadRefreshToken = %q, %v", subject, err)
 	}
 }
 
