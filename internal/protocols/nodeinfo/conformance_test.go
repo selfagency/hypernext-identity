@@ -34,12 +34,22 @@ func TestSpecConformanceNodeInfo(t *testing.T) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 
-	// version must be "2.1" (NodeInfo 2.1 schema).
+	assertNodeInfoVersion(t, raw)
+	assertNodeInfoSoftware(t, raw)
+	assertNodeInfoProtocols(t, raw)
+	assertNodeInfoServices(t, raw)
+	assertNodeInfoUsage(t, raw)
+}
+
+func assertNodeInfoVersion(t *testing.T, raw map[string]any) {
+	t.Helper()
 	if raw["version"] != "2.1" {
 		t.Fatalf("version = %v, want 2.1", raw["version"])
 	}
+}
 
-	// software must be an object with name + version.
+func assertNodeInfoSoftware(t *testing.T, raw map[string]any) {
+	t.Helper()
 	software, ok := raw["software"].(map[string]any)
 	if !ok {
 		t.Fatalf("software not an object: %v", raw["software"])
@@ -47,14 +57,18 @@ func TestSpecConformanceNodeInfo(t *testing.T) {
 	if software["name"] != "hypernext-identity" || software["version"] != "0.1.0" {
 		t.Fatalf("software = %v", software)
 	}
+}
 
-	// protocols must be an array.
+func assertNodeInfoProtocols(t *testing.T, raw map[string]any) {
+	t.Helper()
 	protocols, ok := raw["protocols"].([]any)
 	if !ok || len(protocols) != 3 {
 		t.Fatalf("protocols = %v, want 3", raw["protocols"])
 	}
+}
 
-	// services must be an object with inbound + outbound arrays.
+func assertNodeInfoServices(t *testing.T, raw map[string]any) {
+	t.Helper()
 	services, ok := raw["services"].(map[string]any)
 	if !ok {
 		t.Fatalf("services not an object: %v", raw["services"])
@@ -65,13 +79,13 @@ func TestSpecConformanceNodeInfo(t *testing.T) {
 	if _, ok := services["outbound"].([]any); !ok {
 		t.Fatalf("services.outbound not an array: %v", services["outbound"])
 	}
-
-	// openRegistrations must be a boolean.
 	if raw["openRegistrations"] != false {
 		t.Fatalf("openRegistrations = %v, want false", raw["openRegistrations"])
 	}
+}
 
-	// usage must be an object with users.total.
+func assertNodeInfoUsage(t *testing.T, raw map[string]any) {
+	t.Helper()
 	usage, ok := raw["usage"].(map[string]any)
 	if !ok {
 		t.Fatalf("usage not an object: %v", raw["usage"])

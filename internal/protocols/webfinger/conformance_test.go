@@ -50,14 +50,20 @@ func TestSpecConformanceJRD(t *testing.T) {
 		t.Fatalf("links = %v, want 3 entries", raw["links"])
 	}
 	for _, l := range links {
-		link, ok := l.(map[string]any)
-		if !ok {
-			t.Fatalf("link entry not an object: %v", l)
-		}
-		// Every link must have a rel (RFC 7033 §4.4.4.1).
-		if _, ok := link["rel"].(string); !ok {
-			t.Fatalf("link missing rel: %v", link)
-		}
+		assertLinkHasRel(t, l)
+	}
+}
+
+// assertLinkHasRel verifies a link entry is an object with a rel (RFC 7033
+// §4.4.4.1).
+func assertLinkHasRel(t *testing.T, l any) {
+	t.Helper()
+	link, ok := l.(map[string]any)
+	if !ok {
+		t.Fatalf("link entry not an object: %v", l)
+	}
+	if _, ok := link["rel"].(string); !ok {
+		t.Fatalf("link missing rel: %v", link)
 	}
 }
 
