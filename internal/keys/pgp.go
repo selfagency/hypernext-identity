@@ -28,6 +28,23 @@ func ParsePGPPublicKey(raw string) (*PGPKey, error) {
 		return nil, errors.New("keys: input too large to be a reasonable public key")
 	}
 
+	entity, err := decodeArmoredEntity(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PGPKey{
+		Fingerprint: fmt.Sprintf("%X", entity.PrimaryKey.Fingerprint),
+		Algorithm:   fmt.Sprintf("%d", entity.PrimaryKey.PubKeyAlgo),
+		Identities:  extractIdentities(entity),
+		ExpiresAt:   extractExpiry(entity),
+		Armored:     rearmor(entity),
+	}, nil
+}
+
+// decodeArmoredEntity decodes an armored block, validates it is a public key
+// block, parses exactly one key, and refuses private key material.
+func decodeArmoredEntity(raw string) (*openpgp.Entity, error) {
 	block, err := armor.Decode(strings.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("keys: not a valid armored OpenPGP block: %w", err)
@@ -51,37 +68,42 @@ func ParsePGPPublicKey(raw string) (*PGPKey, error) {
 		// is present, even if the armor type already gated this.
 		return nil, errors.New("keys: private key material detected, refusing to store")
 	}
+	return entity, nil
+}
 
+// extractIdentities returns the key's identity names.
+func extractIdentities(entity *openpgp.Entity) []string {
 	var identities []string
 	for _, ident := range entity.Identities {
 		identities = append(identities, ident.Name)
 	}
+	return identities
+}
 
-	var expires *time.Time
-	if entity.PrimaryKey != nil {
-		if sig, _ := entity.PrimarySelfSignature(); sig != nil && sig.KeyLifetimeSecs != nil {
-			t := entity.PrimaryKey.CreationTime.Add(time.Duration(*sig.KeyLifetimeSecs) * time.Second)
-			expires = &t
-		}
+// extractExpiry returns the key's expiry time, or nil if it never expires.
+func extractExpiry(entity *openpgp.Entity) *time.Time {
+	if entity.PrimaryKey == nil {
+		return nil
 	}
+	if sig, _ := entity.PrimarySelfSignature(); sig != nil && sig.KeyLifetimeSecs != nil {
+		t := entity.PrimaryKey.CreationTime.Add(time.Duration(*sig.KeyLifetimeSecs) * time.Second)
+		return &t
+	}
+	return nil
+}
 
+// rearmor re-serializes the entity into canonical armored form.
+func rearmor(entity *openpgp.Entity) string {
 	var out strings.Builder
 	w, err := armor.Encode(&out, "PGP PUBLIC KEY BLOCK", nil)
 	if err != nil {
-		return nil, err
+		return ""
 	}
 	if err := entity.Serialize(w); err != nil {
-		return nil, err
+		return ""
 	}
 	if err := w.Close(); err != nil {
-		return nil, err
+		return ""
 	}
-
-	return &PGPKey{
-		Fingerprint: fmt.Sprintf("%X", entity.PrimaryKey.Fingerprint),
-		Algorithm:   fmt.Sprintf("%d", entity.PrimaryKey.PubKeyAlgo),
-		Identities:  identities,
-		ExpiresAt:   expires,
-		Armored:     out.String(),
-	}, nil
+	return out.String()
 }
