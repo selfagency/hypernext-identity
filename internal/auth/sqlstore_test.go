@@ -282,8 +282,18 @@ func TestSQLStoreNoopMethods(t *testing.T) {
 	if _, _, err := s.GetRefreshTokenInfo(ctx, "web", "nope"); err == nil {
 		t.Fatal("GetRefreshTokenInfo unknown token accepted")
 	}
+}
 
-	// Userinfo/introspection/claims no-ops.
+// TestSQLStoreUserinfoNoops verifies the userinfo/introspection/claims no-op
+// methods return without error.
+func TestSQLStoreUserinfoNoops(t *testing.T) {
+	ctx := context.Background()
+	st := newSQLTestStore(t)
+	s, err := NewSQLStore(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if err := s.SetUserinfoFromScopes(ctx, &oidc.UserInfo{}, "alice", "web", []string{"openid"}); err != nil {
 		t.Fatalf("SetUserinfoFromScopes = %v", err)
 	}
