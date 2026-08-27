@@ -256,3 +256,49 @@ func TestSQLStoreHealth(t *testing.T) {
 		t.Fatalf("health = %v", err)
 	}
 }
+
+// TestSQLStoreNoopMethods verifies the op.Storage no-op interface methods
+// return without error.
+func TestSQLStoreNoopMethods(t *testing.T) {
+	ctx := context.Background()
+	st := newSQLTestStore(t)
+	s, err := NewSQLStore(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// CreateAccessToken returns a non-empty token + future expiry.
+	tok, exp, err := s.CreateAccessToken(ctx, &testTokenRequest{subject: "alice", audience: []string{"web"}, scopes: []string{"openid"}})
+	if err != nil || tok == "" || exp.IsZero() {
+		t.Fatalf("CreateAccessToken = %q %v %v", tok, exp, err)
+	}
+
+	// TerminateSession is a no-op.
+	if err := s.TerminateSession(ctx, "alice", "web"); err != nil {
+		t.Fatalf("TerminateSession = %v", err)
+	}
+
+	// GetRefreshTokenInfo for an unknown token -> ErrInvalidRefreshToken.
+	if _, _, err := s.GetRefreshTokenInfo(ctx, "web", "nope"); err == nil {
+		t.Fatal("GetRefreshTokenInfo unknown token accepted")
+	}
+
+	// Userinfo/introspection/claims no-ops.
+	if err := s.SetUserinfoFromScopes(ctx, &oidc.UserInfo{}, "alice", "web", []string{"openid"}); err != nil {
+		t.Fatalf("SetUserinfoFromScopes = %v", err)
+	}
+	if err := s.SetUserinfoFromToken(ctx, &oidc.UserInfo{}, "alice", "web", "tok"); err != nil {
+		t.Fatalf("SetUserinfoFromToken = %v", err)
+	}
+	if err := s.SetIntrospectionFromToken(ctx, &oidc.IntrospectionResponse{}, "alice", "web", "tok"); err != nil {
+		t.Fatalf("SetIntrospectionFromToken = %v", err)
+	}
+	claims, err := s.GetPrivateClaimsFromScopes(ctx, "alice", "web", []string{"openid"})
+	if err != nil || claims == nil {
+		t.Fatalf("GetPrivateClaimsFromScopes = %v, %v", claims, err)
+	}
+	scopes, err := s.ValidateJWTProfileScopes(ctx, "alice", []string{"openid"})
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("ValidateJWTProfileScopes = %v, %v", scopes, err)
+	}
+}

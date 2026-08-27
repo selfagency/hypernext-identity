@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/selfagency/sovereign/internal/store"
 )
@@ -105,5 +108,37 @@ func TestWebAuthnHandlerUnknownUser(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (body %q)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSessionStorePutGet verifies put/get round-trip.
+func TestSessionStorePutGet(t *testing.T) {
+	s := NewSessionStore(time.Minute)
+	s.Put("ch1", &webauthn.SessionData{Challenge: "ch1"})
+	got, ok := s.Get("ch1")
+	if !ok || got.Challenge != "ch1" {
+		t.Fatalf("get = %v, %v", got, ok)
+	}
+	if _, ok := s.Get("nope"); ok {
+		t.Fatal("unknown challenge returned")
+	}
+}
+
+// TestSessionStoreExpiry verifies expired sessions are evicted.
+func TestSessionStoreExpiry(t *testing.T) {
+	s := NewSessionStore(-time.Second) // already expired
+	s.Put("ch1", &webauthn.SessionData{Challenge: "ch1"})
+	if _, ok := s.Get("ch1"); ok {
+		t.Fatal("expired session returned")
+	}
+}
+
+// TestSessionStoreDelete verifies Delete removes a session.
+func TestSessionStoreDelete(t *testing.T) {
+	s := NewSessionStore(time.Minute)
+	s.Put("ch1", &webauthn.SessionData{Challenge: "ch1"})
+	s.Delete("ch1")
+	if _, ok := s.Get("ch1"); ok {
+		t.Fatal("deleted session still present")
 	}
 }
