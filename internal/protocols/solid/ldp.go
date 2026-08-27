@@ -208,14 +208,25 @@ func escapeIRI(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
-			c == '-' || c == '.' || c == '_' || c == '~' || c == '/' || c == ':' || c == '#' {
+		if isIRISafe(c) {
 			b.WriteByte(c)
 		} else {
 			fmt.Fprintf(&b, "%%%02X", c)
 		}
 	}
 	return b.String()
+}
+
+// isIRISafe reports whether a byte is allowed unescaped in a Turtle IRI.
+func isIRISafe(c byte) bool {
+	if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+		return true
+	}
+	switch c {
+	case '-', '.', '_', '~', '/', ':', '#':
+		return true
+	}
+	return false
 }
 
 // newSlug returns a random URL-safe slug for a server-assigned child.
