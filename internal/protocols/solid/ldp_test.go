@@ -181,6 +181,85 @@ func TestMethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestHEAD verifies HEAD returns headers without a body (A2).
+func TestHEAD(t *testing.T) {
+	srv, fs := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+	if _, err := fs.Put(context.Background(), "docs/note.ttl", strings.NewReader(":a a :A."), "text/turtle"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("HEAD", "/docs/note.ttl", http.NoBody)
+	req.Host = "alice.example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HEAD = %d, want 200", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("HEAD body = %d bytes, want 0", rec.Body.Len())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/turtle" {
+		t.Fatalf("HEAD content-type = %q, want text/turtle", ct)
+	}
+}
+
+// TestOPTIONS verifies OPTIONS returns an accurate Allow header (A2).
+func TestOPTIONS(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+	req := httptest.NewRequest("OPTIONS", "/docs/x", http.NoBody)
+	req.Host = "alice.example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OPTIONS = %d, want 200", rec.Code)
+	}
+	allow := rec.Header().Get("Allow")
+	for _, m := range []string{"GET", "HEAD", "OPTIONS", "PUT", "POST", "DELETE"} {
+		if !strings.Contains(allow, m) {
+			t.Fatalf("Allow %q missing %s", allow, m)
+		}
+	}
+}
+
+// TestPOSTCreatesChild verifies POST to a container creates a server-assigned
+// child and returns 201 + Location (A2).
+func TestPOSTCreatesChild(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+
+	req := httptest.NewRequest("POST", "/docs/", strings.NewReader(":a a :A."))
+	req.Host = "alice.example.com"
+	req.Header.Set("Content-Type", "text/turtle")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST = %d, want 201", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc == "" {
+		t.Fatal("POST missing Location header")
+	}
+	// The child must be retrievable.
+	getReq := httptest.NewRequest("GET", loc, http.NoBody)
+	getReq.Host = "alice.example.com"
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET child %s = %d, want 200", loc, getRec.Code)
+	}
+}
+
+// TestTurtleEscapesIRIs verifies container Turtle output escapes IRIs (A2).
+func TestTurtleEscapesIRIs(t *testing.T) {
+	var buf strings.Builder
+	writeContainerTurtle(&buf, "docs/", []storage.Blob{{Key: "a b.ttl"}})
+	if strings.Contains(buf.String(), "<docs/a b.ttl>") {
+		t.Fatalf("unescaped IRI in Turtle: %q", buf.String())
+	}
+}
+
 // TestAgentFromRequest verifies agent extraction from context.
 func TestAgentFromRequest(t *testing.T) {
 	// No WebID -> public agent.

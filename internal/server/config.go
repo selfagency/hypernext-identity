@@ -30,6 +30,9 @@ type Config struct {
 type StorageConfig struct {
 	Backend string    `yaml:"backend" mapstructure:"backend"` // "fs" | "s3"
 	S3      *S3Config `yaml:"s3" mapstructure:"s3"`
+	// AllowedOrigins is the CORS allowlist for credentialed protocol
+	// endpoints (remoteStorage). Empty disables CORS.
+	AllowedOrigins []string `yaml:"allowed_origins" mapstructure:"allowed_origins"`
 }
 
 // S3Config configures an S3-compatible blob backend.
