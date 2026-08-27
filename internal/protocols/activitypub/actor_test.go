@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hypernext/identity/internal/tenant"
 )
@@ -88,15 +89,17 @@ func TestServeActorNoTenant(t *testing.T) {
 	}
 }
 
-// signRFC9421 signs a request using RFC 9421 format.
+// signRFC9421 signs a request using RFC 9421 format (quoted structured-field
+// names per the spec).
 func signRFC9421(r *http.Request, priv *rsa.PrivateKey) {
-	// Signing string: (request-target) host date
-	signingString := "@request-target: " + strings.ToLower(r.Method) + " " + r.URL.RequestURI() +
+	// Signing string: "@request-target" host date
+	signingString := `"@request-target": ` + strings.ToLower(r.Method) + " " + r.URL.RequestURI() +
 		"\nhost: " + r.Host +
 		"\ndate: " + r.Header.Get("Date")
 	digest := sha256.Sum256([]byte(signingString))
 	sig, _ := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, digest[:])
-	r.Header.Set("Signature-Input", `sig1=("@request-target" "host" "date");created=1618884473`)
+	// created = now so the freshness check passes.
+	r.Header.Set("Signature-Input", `sig1=("@request-target" "host" "date");created=`+itoa(time.Now().Unix()))
 	r.Header.Set("Signature", "sig1=:"+base64.StdEncoding.EncodeToString(sig)+":")
 }
 
@@ -282,13 +285,13 @@ func TestBuildSigningString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSigningString: %v", err)
 	}
-	if !strings.Contains(ss, "@method: POST") {
+	if !strings.Contains(ss, `"@method": POST`) {
 		t.Fatalf("missing @method: %q", ss)
 	}
-	if !strings.Contains(ss, "@target-uri: /inbox") {
+	if !strings.Contains(ss, `"@target-uri": /inbox`) {
 		t.Fatalf("missing @target-uri: %q", ss)
 	}
-	if !strings.Contains(ss, "@request-target: post /inbox") {
+	if !strings.Contains(ss, `"@request-target": post /inbox`) {
 		t.Fatalf("missing @request-target: %q", ss)
 	}
 	if !strings.Contains(ss, "host: alice.example.com") {

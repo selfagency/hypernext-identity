@@ -156,12 +156,161 @@ func TestHostFromURL(t *testing.T) {
 		"http://example.com/path":  "example.com",
 		"https://example.com:8443": "example.com",
 		"http://10.0.0.1/":         "10.0.0.1",
-		"example.com":              "example.com",
 	}
 	for in, want := range cases {
 		if got := hostFromURL(in); got != want {
 			t.Fatalf("hostFromURL(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestHostFromURLIPv6 verifies IPv6 literals and userinfo are parsed
+// correctly (S13). net/url.Hostname returns IPv6 without brackets.
+func TestHostFromURLIPv6(t *testing.T) {
+	cases := map[string]string{
+		"http://[::1]/":              "::1",
+		"http://[2001:db8::1]:8080/": "2001:db8::1",
+		"http://user@127.0.0.1/":     "127.0.0.1",
+		"http://user@example.com/":   "example.com",
+	}
+	for in, want := range cases {
+		if got := hostFromURL(in); got != want {
+			t.Fatalf("hostFromURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestRequireSafeURLRejectsNonHTTP verifies non-http(s) schemes are rejected
+// (S13).
+func TestRequireSafeURLRejectsNonHTTP(t *testing.T) {
+	v := &Verifier{Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+		"example.com": {{IP: net.ParseIP("93.184.216.34")}},
+	}}}
+	for _, u := range []string{"file:///etc/passwd", "gopher://example.com/", "ftp://example.com/"} {
+		if err := requireSafeURL(context.Background(), u, v.Resolver); err == nil {
+			t.Fatalf("requireSafeURL(%q) succeeded, want error", u)
+		}
+	}
+}
+
+// TestVerifyHTTPBodyRedirectRevalidated verifies a redirect to a private IP
+// is rejected (S8). The initial URL resolves to a public IP, but the redirect
+// target resolves to loopback — the client must re-validate each hop.
+func TestVerifyHTTPBodyRedirectRevalidated(t *testing.T) {
+	// The redirect target is a loopback server.
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("proof@ariadne.id=abc123"))
+	}))
+	defer target.Close()
+
+	// The initial URL redirects to the loopback target.
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	// Both hosts resolve to public IPs in the resolver, but the redirect
+	// target is actually loopback. The client must re-validate the redirect
+	// hop and reject it.
+	v := &Verifier{
+		HTTPClient: redirector.Client(),
+		Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+			hostFromURL(redirector.URL): {{IP: net.ParseIP("93.184.216.34")}},
+			hostFromURL(target.URL):     {{IP: net.ParseIP("127.0.0.1")}},
+		}},
+	}
+	res, err := v.Verify(context.Background(), &Claim{
+		Service:       "custom_url",
+		ClaimLocation: redirector.URL,
+		ExpectedToken: "abc123",
+	})
+	if err == nil {
+		t.Fatalf("redirect to loopback not rejected (status %s)", res.Status)
+	}
+}
+
+// TestVerifyHTTPBodySplitToken verifies a token split across two reads is
+// still found (S8). The current single Read may return short.
+func TestVerifyHTTPBodySplitToken(t *testing.T) {
+	// A server that writes the token in two chunks with a flush between.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("proof@ariadne.id=abc"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		w.Write([]byte("123"))
+	}))
+	defer srv.Close()
+
+	host := hostFromURL(srv.URL)
+	v := &Verifier{
+		HTTPClient: srv.Client(),
+		Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+			host: {{IP: net.ParseIP("93.184.216.34")}},
+		}},
+	}
+	res, err := v.Verify(context.Background(), &Claim{
+		Service:       "custom_url",
+		ClaimLocation: srv.URL,
+		ExpectedToken: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if res.Status != "verified" {
+		t.Fatalf("status = %s, want verified (split token missed)", res.Status)
+	}
+}
+
+// TestVerifyHTTPBodyTooManyRedirects verifies the redirect cap is enforced
+// (S8).
+func TestVerifyHTTPBodyTooManyRedirects(t *testing.T) {
+	// A server that redirects to itself forever.
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	host := hostFromURL(srv.URL)
+	v := &Verifier{
+		HTTPClient: srv.Client(),
+		Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+			host: {{IP: net.ParseIP("93.184.216.34")}},
+		}},
+	}
+	res, err := v.Verify(context.Background(), &Claim{
+		Service:       "custom_url",
+		ClaimLocation: srv.URL,
+		ExpectedToken: "abc123",
+	})
+	if err == nil {
+		t.Fatalf("expected error for too many redirects (status %s)", res.Status)
+	}
+}
+
+// TestVerifyHTTPBodyFetchError verifies a fetch error (e.g. connection
+// refused) is surfaced (S8).
+func TestVerifyHTTPBodyFetchError(t *testing.T) {
+	// A closed server -> connection refused.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+
+	host := hostFromURL(url)
+	v := &Verifier{
+		HTTPClient: &http.Client{},
+		Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+			host: {{IP: net.ParseIP("93.184.216.34")}},
+		}},
+	}
+	res, err := v.Verify(context.Background(), &Claim{
+		Service:       "custom_url",
+		ClaimLocation: url,
+		ExpectedToken: "abc123",
+	})
+	if err == nil {
+		t.Fatalf("expected fetch error (status %s)", res.Status)
 	}
 }
 

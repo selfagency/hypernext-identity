@@ -9,8 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -71,25 +73,42 @@ func (v *Verifier) verifyDNS(ctx context.Context, claim *Claim) (Result, error) 
 	return Result{Status: "failed"}, errors.New("proofs: token not found in TXT records")
 }
 
-// verifyHTTPBody fetches a URL and checks for the expected token.
+// verifyHTTPBody fetches a URL and checks for the expected token. Every hop
+// (including redirects) is re-validated against the SSRF blocklist.
 func (v *Verifier) verifyHTTPBody(ctx context.Context, claim *Claim) (Result, error) {
 	if err := requireSafeURL(ctx, claim.ClaimLocation, v.Resolver); err != nil {
 		return Result{Status: "failed"}, err
+	}
+	// Re-validate every redirect hop against the SSRF blocklist and cap the
+	// number of redirects.
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("proofs: too many redirects")
+			}
+			if err := requireSafeURL(ctx, req.URL.String(), v.Resolver); err != nil {
+				return err
+			}
+			return nil
+		},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claim.ClaimLocation, http.NoBody)
 	if err != nil {
 		return Result{Status: "failed"}, err
 	}
-	resp, err := v.HTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return Result{Status: "failed"}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Hard cap response body size — never read an unbounded remote body.
-	body := make([]byte, 64*1024)
-	n, _ := resp.Body.Read(body)
-	if strings.Contains(string(body[:n]), claim.ExpectedToken) {
+	// Read the body with a hard cap, looping until EOF so a token split
+	// across reads is still found.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return Result{Status: "failed"}, err
+	}
+	if strings.Contains(string(body), claim.ExpectedToken) {
 		return Result{Status: "verified"}, nil
 	}
 	return Result{Status: "failed"}, errors.New("proofs: token not found in response body")
@@ -99,7 +118,14 @@ func (v *Verifier) verifyHTTPBody(ctx context.Context, claim *Claim) (Result, er
 // cloud-metadata addresses. It resolves DNS first and checks the resolved IP
 // (not the hostname string) to defeat DNS rebinding.
 func requireSafeURL(ctx context.Context, rawURL string, resolver Resolver) error {
-	host := hostFromURL(rawURL)
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return errors.New("proofs: invalid url")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("proofs: unsupported scheme")
+	}
+	host := u.Hostname()
 	if host == "" {
 		return errors.New("proofs: invalid url")
 	}
@@ -115,22 +141,14 @@ func requireSafeURL(ctx context.Context, rawURL string, resolver Resolver) error
 	return nil
 }
 
-// hostFromURL extracts the host from a URL string.
+// hostFromURL extracts the host from a URL string, handling IPv6 literals and
+// userinfo correctly via net/url.
 func hostFromURL(rawURL string) string {
-	// Strip scheme.
-	rest := rawURL
-	if idx := strings.Index(rest, "://"); idx >= 0 {
-		rest = rest[idx+3:]
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
 	}
-	// Strip path/query.
-	if idx := strings.IndexAny(rest, "/?"); idx >= 0 {
-		rest = rest[:idx]
-	}
-	// Strip port.
-	if idx := strings.Index(rest, ":"); idx >= 0 {
-		rest = rest[:idx]
-	}
-	return rest
+	return u.Hostname()
 }
 
 // isBlockedIP reports whether an IP is private/loopback/link-local or a

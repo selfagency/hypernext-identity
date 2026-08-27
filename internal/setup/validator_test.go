@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -98,5 +99,37 @@ func TestAllPass(t *testing.T) {
 func TestErrNoChecks(t *testing.T) {
 	if ErrNoChecks.Error() != "no setup checks run" {
 		t.Fatalf("ErrNoChecks = %q", ErrNoChecks.Error())
+	}
+}
+
+// TestNewValidator verifies the default validator is wired with real
+// resolvers and https scheme.
+func TestNewValidator(t *testing.T) {
+	v := NewValidator()
+	if v.Scheme != "https" {
+		t.Fatalf("scheme = %q, want https", v.Scheme)
+	}
+	if v.HTTPClient == nil || v.LookupTXT == nil || v.LookupIP == nil {
+		t.Fatal("default validator missing resolvers")
+	}
+}
+
+// TestValidateWellKnownSSRF verifies the well-known check rejects a handle
+// resolving to a private/loopback address (S14).
+func TestValidateWellKnownSSRF(t *testing.T) {
+	v := &Validator{
+		HTTPClient: &http.Client{},
+		LookupTXT: func(_ context.Context, _ string) ([]string, error) {
+			return []string{"did=did:plc:abc123"}, nil
+		},
+		Scheme: "http",
+		// A resolver that reports loopback for the handle.
+		LookupIP: func(_ context.Context, host string) ([]net.IPAddr, error) {
+			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+		},
+	}
+	checks := v.Validate(context.Background(), "127.0.0.1")
+	if checks[1].OK {
+		t.Fatalf("well-known check should fail for loopback handle: %+v", checks[1])
 	}
 }

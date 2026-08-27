@@ -4,6 +4,7 @@
 package endpoints
 
 import (
+	"crypto/sha1"
 	"encoding/json"
 	"html/template"
 	"net/http"
@@ -57,15 +58,14 @@ func (h *KeysHandler) serveKeys(w http.ResponseWriter, r *http.Request, keyType 
 	}
 }
 
-// serveWKD serves a single key by z-base-32 hash of the localpart.
+// serveWKD serves a single key by z-base-32 hash of the localpart. The hash
+// is the last path segment; we look up the key whose identity localpart hashes
+// to it, and 404 on a mismatch (S7).
 func (h *KeysHandler) serveWKD(w http.ResponseWriter, r *http.Request) {
-	// The hash is the last path segment; we look up by fingerprint match.
-	// For simplicity, serve the tenant's first active PGP key.
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	hash := parts[len(parts)-1]
-	_ = hash
 	// Resolve tenant from the host header (WKD is per-domain).
-	tenantID := r.Host
+	tenantID := strings.Split(r.Host, ":")[0]
 	keys, err := h.Store.ListPublicKeys(r.Context(), tenantID, "pgp")
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -73,7 +73,11 @@ func (h *KeysHandler) serveWKD(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range keys {
 		k := &keys[i]
-		if k.RevokedAt == nil {
+		if k.RevokedAt != nil {
+			continue
+		}
+		// Match the requested hash against the key's localpart hash.
+		if wkdHash(localpartFromKey(k)) == hash {
 			w.Header().Set("Content-Type", "application/pgp-keys")
 			// #nosec G705 — plaintext key output, not HTML.
 			_, _ = w.Write([]byte(k.KeyMaterial))
@@ -81,6 +85,42 @@ func (h *KeysHandler) serveWKD(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// localpartFromKey derives the localpart (email user) from a public key's
+// account ID. The account ID is the localpart for the tenant host.
+func localpartFromKey(k *store.PublicKey) string {
+	return k.AccountID
+}
+
+// wkdHash computes the z-base-32 WKD hash of a localpart (SHA-1, then
+// z-base-32 encoding per the WKD spec). SHA-1 is mandated by the WKD spec
+// for the localpart hash; it is not used for security here.
+func wkdHash(localpart string) string {
+	sum := sha1.Sum([]byte(localpart)) // #nosec G401
+	const alphabet = "ybndrfg8ejkmcpqxot1uwisza345h769"
+	var out []byte
+	// Encode the 20-byte SHA-1 as z-base-32 (32 chars).
+	for i := 0; i < len(sum); i += 5 {
+		var buf [8]byte
+		bits := 0
+		val := 0
+		for j := 0; j < 5 && i+j < len(sum); j++ {
+			val = (val << 8) | int(sum[i+j])
+			bits += 8
+		}
+		for j := 7; j >= 0; j-- {
+			if bits >= 5 {
+				buf[j] = alphabet[val&0x1f]
+				val >>= 5
+				bits -= 5
+			}
+		}
+		for j := 0; j < 8; j++ {
+			out = append(out, buf[7-j])
+		}
+	}
+	return string(out)
 }
 
 // serveKeysPage serves a human-readable keys page.

@@ -96,10 +96,10 @@ func TestGPGEndpoint(t *testing.T) {
 func TestWKDEndpoint(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	_ = s.CreatePublicKey(ctx, &store.PublicKey{ID: "k1", TenantID: "alice.example.com", AccountID: "a1", KeyType: "pgp", Fingerprint: "fp1", KeyMaterial: "-----BEGIN PGP PUBLIC KEY BLOCK-----"})
+	_ = s.CreatePublicKey(ctx, &store.PublicKey{ID: "k1", TenantID: "alice.example.com", AccountID: "alice", KeyType: "pgp", Fingerprint: "fp1", KeyMaterial: "-----BEGIN PGP PUBLIC KEY BLOCK-----"})
 
 	h := &KeysHandler{Store: s}
-	req := httptest.NewRequest("GET", "/.well-known/openpgpkey/hu/abc123", http.NoBody)
+	req := httptest.NewRequest("GET", "/.well-known/openpgpkey/hu/"+wkdHash("alice"), http.NoBody)
 	req.Host = "alice.example.com"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -109,6 +109,52 @@ func TestWKDEndpoint(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/pgp-keys" {
 		t.Fatalf("content-type = %q, want application/pgp-keys", ct)
+	}
+}
+
+// TestWKDHashLookup verifies WKD serves the key whose localpart hashes to the
+// requested z-base-32 value, and 404s on a mismatch (S7). The current handler
+// ignores the hash and returns the first active key.
+func TestWKDHashLookup(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	// Two keys for two different localparts (account IDs).
+	_ = s.CreatePublicKey(ctx, &store.PublicKey{ID: "k1", TenantID: "alice.example.com", AccountID: "alice", KeyType: "pgp", Fingerprint: "fp1", KeyMaterial: "KEY-ALICE"})
+	_ = s.CreatePublicKey(ctx, &store.PublicKey{ID: "k2", TenantID: "alice.example.com", AccountID: "bob", KeyType: "pgp", Fingerprint: "fp2", KeyMaterial: "KEY-BOB"})
+
+	h := &KeysHandler{Store: s}
+
+	// Request the hash for alice's localpart.
+	req := httptest.NewRequest("GET", "/.well-known/openpgpkey/hu/"+wkdHash("alice"), http.NoBody)
+	req.Host = "alice.example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("alice hash = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "KEY-ALICE") {
+		t.Fatalf("alice hash served wrong key: %q", rec.Body.String())
+	}
+
+	// Request the hash for bob's localpart.
+	req2 := httptest.NewRequest("GET", "/.well-known/openpgpkey/hu/"+wkdHash("bob"), http.NoBody)
+	req2.Host = "alice.example.com"
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("bob hash = %d, want 200", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "KEY-BOB") {
+		t.Fatalf("bob hash served wrong key: %q", rec2.Body.String())
+	}
+
+	// An unknown hash must 404.
+	req3 := httptest.NewRequest("GET", "/.well-known/openpgpkey/hu/zzzzzzzz", http.NoBody)
+	req3.Host = "alice.example.com"
+	rec3 := httptest.NewRecorder()
+	h.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusNotFound {
+		t.Fatalf("unknown hash = %d, want 404", rec3.Code)
 	}
 }
 
