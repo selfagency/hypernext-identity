@@ -51,6 +51,13 @@ func RunContractTests(t *testing.T, newBackend func() Backend) {
 		}
 	})
 
+	t.Run("delete missing key returns ErrNotFound", func(t *testing.T) {
+		b := newBackend()
+		if err := b.Delete(context.Background(), "never-existed.txt"); err != ErrNotFound {
+			t.Fatalf("delete missing = %v, want ErrNotFound", err)
+		}
+	})
+
 	t.Run("get missing key returns error", func(t *testing.T) {
 		b := newBackend()
 		if _, _, err := b.Get(context.Background(), "nope.txt"); err == nil {

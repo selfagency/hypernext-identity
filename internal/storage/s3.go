@@ -84,10 +84,14 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
 	return obj, Blob{Key: key, ContentType: st.ContentType, Size: st.Size}, nil
 }
 
-// Delete removes the stored object for key.
+// Delete removes the stored object for key. It returns ErrNotFound if the
+// key does not exist, matching the FS backend contract.
 func (s *S3) Delete(ctx context.Context, key string) error {
 	err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
-	if err != nil && !isNotFound(err) {
+	if err != nil {
+		if isNotFound(err) {
+			return ErrNotFound
+		}
 		return err
 	}
 	return nil
