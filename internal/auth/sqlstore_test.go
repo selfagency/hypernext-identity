@@ -157,6 +157,24 @@ func TestSQLStoreAuthRequest(t *testing.T) {
 	if byCode.GetID() != ar.GetID() {
 		t.Fatalf("by code = %+v", byCode)
 	}
+}
+
+// TestSQLStoreAuthRequestErrors verifies unknown code/request and delete.
+func TestSQLStoreAuthRequestErrors(t *testing.T) {
+	ctx := context.Background()
+	st := newSQLTestStore(t)
+	s, err := NewSQLStore(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ar, err := s.CreateAuthRequest(ctx, &oidc.AuthRequest{
+		ClientID: "web", Scopes: []string{"openid"}, RedirectURI: "https://app.example.com/cb",
+		State: "st", Nonce: "n", CodeChallenge: "challenge",
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Unknown code / request errors.
 	if _, err := s.AuthRequestByCode(ctx, "nope"); err == nil {
