@@ -97,8 +97,7 @@ func localpartFromKey(k *store.PublicKey) string {
 // z-base-32 encoding per the WKD spec). SHA-1 is mandated by the WKD spec
 // for the localpart hash; it is not used for security here.
 func wkdHash(localpart string) string {
-	// #nosec G401
-	sum := sha1.Sum([]byte(localpart))
+	sum := sha1.Sum([]byte(localpart)) // #nosec G401 — WKD spec mandates SHA-1 for the localpart hash; not used for security
 	const alphabet = "ybndrfg8ejkmcpqxot1uwisza345h769"
 	var out []byte
 	// Encode the 20-byte SHA-1 as z-base-32 (32 chars).
