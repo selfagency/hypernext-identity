@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -54,10 +55,12 @@ func (s *Store) ListProofClaims(ctx context.Context, tenantID string) ([]ProofCl
 	var out []ProofClaim
 	for rows.Next() {
 		var c ProofClaim
+		var lastErr sql.NullString
 		if err := rows.Scan(&c.ID, &c.TenantID, &c.AccountID, &c.AnchorType, &c.AnchorValue,
-			&c.Service, &c.ClaimLocation, &c.ExpectedToken, &c.Status, &c.LastCheckedAt, &c.LastError, &c.CreatedAt); err != nil {
+			&c.Service, &c.ClaimLocation, &c.ExpectedToken, &c.Status, &c.LastCheckedAt, &lastErr, &c.CreatedAt); err != nil {
 			return nil, err
 		}
+		c.LastError = lastErr.String
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -97,10 +100,12 @@ func (s *Store) VerifiedProofClaims(ctx context.Context, tenantID string) ([]Pro
 	var out []ProofClaim
 	for rows.Next() {
 		var c ProofClaim
+		var lastErr sql.NullString
 		if err := rows.Scan(&c.ID, &c.TenantID, &c.AccountID, &c.AnchorType, &c.AnchorValue,
-			&c.Service, &c.ClaimLocation, &c.ExpectedToken, &c.Status, &c.LastCheckedAt, &c.LastError, &c.CreatedAt); err != nil {
+			&c.Service, &c.ClaimLocation, &c.ExpectedToken, &c.Status, &c.LastCheckedAt, &lastErr, &c.CreatedAt); err != nil {
 			return nil, err
 		}
+		c.LastError = lastErr.String
 		out = append(out, c)
 	}
 	return out, rows.Err()
