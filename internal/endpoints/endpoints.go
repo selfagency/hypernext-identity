@@ -35,14 +35,12 @@ func (h *KeysHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveKeys serves the .keys/.gpg plaintext output (GitHub/GitLab convention).
+// The tenant is derived from the request host (set by the tenant middleware),
+// never from the URL path — a path handle must not override the host-derived
+// tenant (C4).
 func (h *KeysHandler) serveKeys(w http.ResponseWriter, r *http.Request, keyType string) {
-	// Strip the ".keys" or ".gpg" suffix to get the handle.
-	suffix := ".keys"
-	if keyType == "pgp" {
-		suffix = ".gpg"
-	}
-	handle := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), suffix)
-	tenantID := handle // handle == tenant host
+	// The tenant is the request host (the tenant middleware resolved it).
+	tenantID := strings.Split(r.Host, ":")[0]
 	keys, err := h.Store.ListPublicKeys(r.Context(), tenantID, keyType)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

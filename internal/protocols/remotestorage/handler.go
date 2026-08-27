@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/hypernext/identity/internal/storage"
 	"github.com/hypernext/identity/internal/tenant"
@@ -58,7 +59,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	backend := s.Backend(t.ID)
-	key := r.URL.Path
+	// r.URL.Path starts with "/"; the storage key is the path without the
+	// leading slash (the Prefixed backend rejects absolute keys).
+	key := strings.TrimPrefix(r.URL.Path, "/")
 
 	switch r.Method {
 	case http.MethodPut:

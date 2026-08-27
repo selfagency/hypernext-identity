@@ -1,11 +1,16 @@
----
 # Codacy configuration.
 # Exclude AGENTS.md from static analysis: it is an agent-guidance document,
 # not code, and Codacy's doc-quality rules (acronyms, vague instructions,
 # absolute rules) flag it heavily. The file is intentionally terse prose.
-# endpoints.go computes the WKD z-base-32 hash, which the WKD spec mandates
-# as SHA-1 of the localpart. gosec/golangci-lint flag SHA-1 as weak, but it
-# is required for spec conformance here (not used for security).
 exclude_paths:
   - "AGENTS.md"
-  - "internal/endpoints/endpoints.go"
+  - "AGENTS.original.md"
+
+# Per-tool configuration. gosec flags the WKD z-base-32 hash (SHA-1) as
+# insecure, but SHA-1 is mandated by the WKD spec for the localpart hash and
+# is not used for security. Exclude the endpoints package from gosec's
+# weak-crypto check.
+engines:
+  gosec:
+    exclude_paths:
+      - "internal/endpoints/endpoints.go"

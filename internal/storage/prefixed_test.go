@@ -92,3 +92,60 @@ func TestPrefixedPath(t *testing.T) {
 		t.Fatalf("raw get of prefixed key: %v", err)
 	}
 }
+
+// TestPrefixedRejectsTraversal verifies the Prefixed backend rejects keys
+// that would escape the tenant namespace. path.Join silently cleans
+// traversal ("a" + "/../b/x" -> "b/x"), which would let a tenant read or
+// write another tenant's blobs. The hardened key() must reject these.
+func TestPrefixedRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	base := &FS{Root: root}
+	alice := &Prefixed{Backend: base, Prefix: "alice"}
+	ctx := context.Background()
+
+	// Seed a blob under bob's namespace directly.
+	if _, err := base.Put(ctx, "bob/docs/secret", bytes.NewReader([]byte("bob secret")), "text/plain"); err != nil {
+		t.Fatalf("seed bob blob: %v", err)
+	}
+
+	// Every traversal/absolute key must be rejected, not silently cleaned.
+	badKeys := []string{
+		"/../bob/docs/secret",
+		"../bob/docs/secret",
+		"../../bob/docs/secret",
+		"docs/../../bob/docs/secret",
+		"/bob/docs/secret",
+		"..",
+		"../",
+		"",
+	}
+	for _, k := range badKeys {
+		if _, _, err := alice.Get(ctx, k); err == nil {
+			t.Fatalf("Get(%q) succeeded — traversal not rejected", k)
+		}
+		if _, err := alice.Put(ctx, k, bytes.NewReader([]byte("x")), "text/plain"); err == nil {
+			t.Fatalf("Put(%q) succeeded — traversal not rejected", k)
+		}
+	}
+
+	// Alice must not be able to read bob's blob via any crafted key.
+	if _, _, err := alice.Get(ctx, "../bob/docs/secret"); err == nil {
+		t.Fatal("alice read bob's blob via traversal")
+	}
+}
+
+// TestPrefixedRejectsTraversalOnAllOps verifies Delete and List also reject
+// traversal keys (the error path of key()).
+func TestPrefixedRejectsTraversalOnAllOps(t *testing.T) {
+	root := t.TempDir()
+	base := &FS{Root: root}
+	alice := &Prefixed{Backend: base, Prefix: "alice"}
+	ctx := context.Background()
+
+	if err := alice.Delete(ctx, "../bob/x"); err == nil {
+		t.Fatal("Delete with traversal key succeeded")
+	}
+	if _, err := alice.List(ctx, "../bob"); err == nil {
+		t.Fatal("List with traversal key succeeded")
+	}
+}

@@ -54,3 +54,8 @@ func FromContext(ctx context.Context) (*Tenant, bool) {
 	t, ok := ctx.Value(tenantCtxKey).(*Tenant)
 	return t, ok
 }
+
+// WithTenant returns a context carrying the given tenant.
+func WithTenant(ctx context.Context, t *Tenant) context.Context {
+	return context.WithValue(ctx, tenantCtxKey, t)
+}
