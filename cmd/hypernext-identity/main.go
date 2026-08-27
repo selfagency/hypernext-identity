@@ -50,6 +50,8 @@ ActivityPub actor.`,
 	},
 	// SilenceUsage avoids dumping usage on runtime errors (only on flag errors).
 	SilenceUsage: true,
+	// SilenceErrors lets runMain own error output (avoids a double print).
+	SilenceErrors: true,
 }
 
 // serveCmd runs the HTTP server.
