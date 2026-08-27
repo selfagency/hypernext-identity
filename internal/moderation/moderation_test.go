@@ -2,6 +2,7 @@ package moderation
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -188,5 +189,78 @@ func TestAcceptHandlerMissingTenant(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// failingAuditLog returns an error on Append.
+type failingAuditLog struct{}
+
+func (failingAuditLog) Append(context.Context, AuditEntry) error { return errors.New("append failed") }
+
+func (failingAuditLog) List(context.Context, int) ([]AuditEntry, error) {
+	return nil, errors.New("list failed")
+}
+
+// TestTakedownAuditError verifies an audit log error returns 500.
+func TestTakedownAuditError(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	ctx := context.Background()
+	if _, err := fs.Put(ctx, "posts/1", strings.NewReader("data"), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	h := &TakedownHandler{Backend: func(string) storage.Backend { return fs }, Log: failingAuditLog{}}
+	form := url.Values{"resource": {"posts/1"}, "reason": {"spam"}, "tenant": {"t1"}}
+	req := httptest.NewRequest("POST", "/moderation/takedown", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+// failingToSStore returns an error on Accepted/Accept.
+type failingToSStore struct{}
+
+func (failingToSStore) Accepted(context.Context, string) (bool, error) {
+	return false, errors.New("accepted failed")
+}
+func (failingToSStore) Accept(context.Context, string) error { return errors.New("accept failed") }
+
+// TestToSGateStoreError verifies a ToS store error returns 500.
+func TestToSGateStoreError(t *testing.T) {
+	gate := &ToSGate{Store: failingToSStore{}}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := gate.Middleware(next)
+	req := httptest.NewRequest("GET", "/data", http.NoBody)
+	req.URL.RawQuery = "tenant=t1"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+// TestAcceptHandlerMethodNotAllowed verifies non-POST is rejected.
+func TestAcceptHandlerMethodNotAllowed(t *testing.T) {
+	h := &AcceptHandler{Store: NewMemoryToSStore()}
+	req := httptest.NewRequest("GET", "/admin/tos", http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+}
+
+// TestAcceptHandlerStoreError verifies a store error returns 500.
+func TestAcceptHandlerStoreError(t *testing.T) {
+	h := &AcceptHandler{Store: failingToSStore{}}
+	form := url.Values{"tenant": {"t1"}}
+	req := httptest.NewRequest("POST", "/admin/tos", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
 	}
 }
