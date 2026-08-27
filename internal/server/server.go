@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hypernext/identity/internal/auth"
+	"github.com/hypernext/identity/internal/authstore"
 	"github.com/hypernext/identity/internal/endpoints"
 	"github.com/hypernext/identity/internal/protocols/activitypub"
 	"github.com/hypernext/identity/internal/protocols/atproto"
@@ -24,15 +26,17 @@ import (
 	"github.com/hypernext/identity/internal/storage"
 	"github.com/hypernext/identity/internal/store"
 	"github.com/hypernext/identity/internal/tenant"
+	"github.com/hypernext/identity/internal/wiring"
 )
 
 // Server is the assembled identity server.
 type Server struct {
-	cfg    *Config
-	store  *store.Store
-	blobs  storage.Backend
-	mux    http.Handler
-	logger *slog.Logger
+	cfg       *Config
+	store     *store.Store
+	authStore *authstore.Store
+	blobs     storage.Backend
+	mux       http.Handler
+	logger    *slog.Logger
 }
 
 // New assembles the server from config: opens the SQLite store, builds the
@@ -52,13 +56,23 @@ func New(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
+	// Build the auth store (persists the OIDC signing key + refresh tokens).
+	mem, err := auth.NewMemoryStore()
+	if err != nil {
+		return nil, fmt.Errorf("new auth store: %w", err)
+	}
+	authStore, err := authstore.New(context.Background(), mem, st)
+	if err != nil {
+		return nil, fmt.Errorf("open auth store: %w", err)
+	}
+
 	// Build the blob backend.
 	blobs, err := buildBlobBackend(cfg, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	s := &Server{cfg: cfg, store: st, blobs: blobs, logger: logger}
+	s := &Server{cfg: cfg, store: st, authStore: authStore, blobs: blobs, logger: logger}
 	s.buildRouter()
 	return s, nil
 }
@@ -108,14 +122,14 @@ func (s *Server) buildRouter() {
 	// remoteStorage.
 	rs := &remotestorage.Server{
 		Backend: backendFor,
-		Tokens:  nil, // token validation wired in a later phase
+		Tokens:  &wiring.TokenValidator{Auth: s.authStore},
 	}
 	mux.Handle("/rs/", rs)
 
 	// Solid LDP.
 	solidSrv := &solid.Server{
 		Backend: backendFor,
-		ACL:     nil, // ACL enforcement wired in a later phase
+		ACL:     &wiring.ACLChecker{Store: s.store},
 	}
 	mux.Handle("/solid/", solidSrv)
 
@@ -159,9 +173,8 @@ func (s *Server) buildRouter() {
 	}
 
 	// atproto PDS.
-	dir := atproto.NewDirectory()
-	_ = dir
-	mux.Handle("/xrpc/", s.atprotoHandler())
+	xrpc := &atproto.XRPCServer{Store: s.store}
+	mux.Handle("/xrpc/", xrpc)
 
 	// IndieAuth.
 	bridge := indieauth.NewBridge(true, nil)
@@ -171,25 +184,27 @@ func (s *Server) buildRouter() {
 	s.mux = tenant.Middleware(s.tenantStore())(mux)
 }
 
-// tenantStore resolves a host to a tenant.
+// tenantStore resolves a host to a tenant from the SQLite store.
 func (s *Server) tenantStore() tenant.Store {
-	return staticTenantStore{domain: s.cfg.Domain}
+	return sqliteTenantStore{store: s.store}
 }
 
-// staticTenantStore resolves any subdomain of the configured domain to a
-// tenant. A real tenant registry replaces it in a later phase.
-type staticTenantStore struct {
-	domain string
+// sqliteTenantStore resolves hosts to tenants via the SQLite store.
+type sqliteTenantStore struct {
+	store *store.Store
 }
 
-func (t staticTenantStore) FindByHost(_ context.Context, host string) (*tenant.Tenant, error) {
-	if host == t.domain || host == "id."+t.domain {
-		return &tenant.Tenant{ID: "root", Handle: host, DIDMethod: "web"}, nil
+func (t sqliteTenantStore) FindByHost(ctx context.Context, host string) (*tenant.Tenant, error) {
+	tn, err := t.store.GetTenantByHandle(ctx, host)
+	if err != nil {
+		return nil, tenant.ErrNotFound
 	}
-	if len(host) > len(t.domain)+1 && host[len(host)-len(t.domain):] == t.domain {
-		return &tenant.Tenant{ID: host, Handle: host, DIDMethod: "web"}, nil
-	}
-	return nil, tenant.ErrNotFound
+	return &tenant.Tenant{
+		ID:        tn.ID,
+		Handle:    tn.Handle,
+		DIDMethod: tn.DIDMethod,
+		DID:       tn.DID,
+	}, nil
 }
 
 // hcardHandler serves the HTML h-card profile.
@@ -206,13 +221,6 @@ func (s *Server) didDocHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/did+json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": "did:web:" + r.Host})
 	}
-}
-
-// atprotoHandler serves atproto XRPC endpoints.
-func (s *Server) atprotoHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "atproto XRPC not yet wired", http.StatusNotImplemented)
-	})
 }
 
 // ServeHTTP serves the assembled server.
