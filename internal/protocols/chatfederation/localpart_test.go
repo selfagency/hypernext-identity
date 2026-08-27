@@ -10,12 +10,12 @@ func TestNormalizeLocalpart(t *testing.T) {
 	}{
 		{"Alice", "alice"},
 		{"Alice.Example", "alice.example"},
-		{"alice@example", "aliceexample"}, // @ dropped
-		{"alice example", "aliceexample"}, // space dropped
+		{"alice@example", "alice-x40example"}, // @ escaped (injective)
+		{"alice example", "alice-x20example"}, // space escaped (injective)
 		{"alice_1", "alice_1"},
-		{"", "user"},           // empty -> fallback
-		{"@@@", "user"},        // all-disallowed -> fallback
-		{"Ünïcode", "ünïcode"}, // unicode letters kept, lowercased
+		{"", "user"},            // empty -> fallback
+		{"@@@", "-x40-x40-x40"}, // all-disallowed -> escaped (injective)
+		{"Ünïcode", "ünïcode"},  // unicode letters kept, lowercased
 	}
 	for _, c := range cases {
 		if got := NormalizeLocalpart(c.in); got != c.want {
@@ -68,6 +68,23 @@ func TestNormalizeProducesValidBoth(t *testing.T) {
 		}
 		if !IsValidJIDNode(out) {
 			t.Fatalf("normalized %q -> %q not a valid JID node", in, out)
+		}
+	}
+}
+
+// TestNormalizeInjective verifies distinct inputs never collide (S13). The
+// current implementation strips disallowed characters, so "Foo@Bar!" and
+// "foobar" both normalize to "foobar". Normalization must be injective.
+func TestNormalizeInjective(t *testing.T) {
+	pairs := [][2]string{
+		{"Foo@Bar!", "foobar"},
+		{"a b", "ab"},
+		{"alice@example", "aliceexample"},
+		{"alice example", "aliceexample"},
+	}
+	for _, p := range pairs {
+		if NormalizeLocalpart(p[0]) == NormalizeLocalpart(p[1]) {
+			t.Fatalf("collision: NormalizeLocalpart(%q) == NormalizeLocalpart(%q) == %q", p[0], p[1], NormalizeLocalpart(p[0]))
 		}
 	}
 }

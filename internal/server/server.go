@@ -18,8 +18,6 @@ import (
 	"github.com/hypernext/identity/internal/endpoints"
 	"github.com/hypernext/identity/internal/protocols/activitypub"
 	"github.com/hypernext/identity/internal/protocols/atproto"
-	"github.com/hypernext/identity/internal/protocols/indieauth"
-	"github.com/hypernext/identity/internal/protocols/ipfspin"
 	"github.com/hypernext/identity/internal/protocols/nodeinfo"
 	"github.com/hypernext/identity/internal/protocols/remotestorage"
 	"github.com/hypernext/identity/internal/protocols/solid"
@@ -172,23 +170,18 @@ func (s *Server) buildRouter() {
 	proofs := &endpoints.ProofsHandler{Store: s.store}
 	mux.Handle("/.well-known/proofs", proofs)
 
-	// IPFS pinning (broker) — the pinner is a client injected into backup/
-	// export flows, not a standalone HTTP endpoint.
-	if s.cfg.IPFS.Enabled {
-		_ = ipfspin.NewKuboRPC("http://127.0.0.1:5001")
-	}
-
 	// atproto PDS.
 	xrpc := &atproto.XRPCServer{Store: s.store}
 	mux.Handle("/xrpc/", xrpc)
 
-	// IndieAuth.
-	bridge := indieauth.NewBridge(true, nil)
-	_ = bridge
-
-	// Tenant middleware wraps the whole mux.
-	s.mux = tenant.Middleware(s.tenantStore())(mux)
+	// Tenant middleware wraps the whole mux, then the hardening chain
+	// (panic recovery -> security headers -> body cap).
+	hardened := maxBody(securityHeaders(recoverPanic(mux)), maxBodyBytes)
+	s.mux = tenant.Middleware(s.tenantStore())(hardened)
 }
+
+// maxBodyBytes is the default request-body cap (10 MiB).
+const maxBodyBytes = 10 << 20
 
 // tenantStore resolves a host to a tenant from the SQLite store.
 func (s *Server) tenantStore() tenant.Store {

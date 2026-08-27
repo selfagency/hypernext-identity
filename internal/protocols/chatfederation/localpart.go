@@ -6,14 +6,16 @@
 package chatfederation
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 )
 
 // NormalizeLocalpart converts a handle/username into a form valid as both a
-// Matrix localpart and an RFC 7622 XMPP JID node:
+// Matrix localpart and an RFC 7622 JID node:
 //   - lowercased
-//   - disallowed characters stripped or replaced
+//   - disallowed characters replaced with a deterministic escape (injective,
+//     so distinct inputs never collide)
 //   - never empty
 //
 // RFC 7622 JID node rules: must not be empty, must not contain the
@@ -24,6 +26,10 @@ func NormalizeLocalpart(input string) string {
 	for _, r := range strings.ToLower(input) {
 		if isAllowed(r) {
 			sb.WriteRune(r)
+		} else {
+			// Escape disallowed runes deterministically so normalization is
+			// injective ("a b" != "ab"). The escape uses only allowed chars.
+			sb.WriteString(escapeRune(r))
 		}
 	}
 	out := sb.String()
@@ -31,6 +37,14 @@ func NormalizeLocalpart(input string) string {
 		return "user"
 	}
 	return out
+}
+
+// escapeRune encodes a disallowed rune as a deterministic, injective escape
+// using only allowed characters. The format is "-x<hex>" where hex is the
+// rune's code point; the leading '-' is unambiguous because a literal '-'
+// is allowed and would be written as itself.
+func escapeRune(r rune) string {
+	return fmt.Sprintf("-x%x", r)
 }
 
 // isAllowed reports whether a rune is safe in both a Matrix localpart and an

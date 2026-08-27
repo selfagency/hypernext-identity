@@ -4,6 +4,7 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 
@@ -87,7 +88,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true) // unknown config keys error loudly (D1)
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {

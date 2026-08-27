@@ -76,6 +76,17 @@ storage:
 	}
 }
 
+// TestLoadConfigUnknownKey verifies an unknown config key errors loudly (D1).
+func TestLoadConfigUnknownKey(t *testing.T) {
+	path := writeConfig(t, `domain: example.com
+data_dir: ./data
+not_a_real_key: true
+`)
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("expected error for unknown config key")
+	}
+}
+
 // TestNewServer verifies server assembly.
 func TestNewServer(t *testing.T) {
 	cfg := &Config{

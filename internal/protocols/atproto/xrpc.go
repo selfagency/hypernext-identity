@@ -30,12 +30,20 @@ func (x *XRPCClient) ResolveHandle(ctx context.Context, handle string) (string, 
 }
 
 // GetProfile calls app.bsky.actor.getProfile.
-func (x *XRPCClient) GetProfile(ctx context.Context, actor string) (map[string]any, error) {
-	var out map[string]any
+func (x *XRPCClient) GetProfile(ctx context.Context, actor string) (*Profile, error) {
+	var out Profile
 	err := x.c.Do(ctx, xrpc.Query, "", "app.bsky.actor.getProfile",
 		map[string]any{"actor": actor}, nil, &out)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	return &out, nil
+}
+
+// Profile is the typed app.bsky.actor.getProfile response.
+type Profile struct {
+	DID         string `json:"did"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"displayName,omitempty"`
+	Avatar      string `json:"avatar,omitempty"`
 }

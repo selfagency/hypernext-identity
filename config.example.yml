@@ -17,6 +17,10 @@ data_dir: ./data
 #   s3:  any S3-compatible endpoint
 storage:
   backend: fs
+  # CORS allowlist for credentialed protocol endpoints (remoteStorage).
+  # Empty disables CORS. A wildcard is never emitted for credentialed requests.
+  # allowed_origins:
+  #   - https://app.example.com
   # s3:
   #   endpoint: https://s3.example.com
   #   bucket: hypernext-blobs
@@ -31,34 +35,24 @@ sqlite:
   #   path: ./data/identity.db
 
 # TLS / ACME (wildcard cert for tenant subdomains). Uses certmagic.
+# NOTE: TLS termination is not yet implemented; this config is reserved.
 tls:
-  enabled: true
+  enabled: false
   email: admin@example.com
-  # dns_provider: cloudflare   # required for wildcard certs (DNS-01)
-  # dns_api_token_env: CLOUDFLARE_API_TOKEN
 
 # IPFS integration (optional, off by default). Broker mode — no embedded node.
+# NOTE: the IPFS pinning client is not yet wired into the blob flow.
 ipfs:
   enabled: false
-  # mode: kubo-rpc | pinning-service
-  # kubo_rpc_url: http://127.0.0.1:5001
-  # pinning_service:
-  #   endpoint: https://api.pinata.cloud/psa
-  #   token: ...
-  # gateway: https://ipfs.io
 
 # atproto PDS
 atproto:
   # did method for new accounts: plc (default) | web
   did_method: plc
-  # PLC directory endpoint (only used when did_method=plc)
-  plc_endpoint: https://plc.directory
 
 # Backup schedule (also configurable via admin UI)
 backup:
   # cron_expr: "0 3 * * *"
-  # destination_type: fs | s3
-  # destination_config: '{"path":"./data/backups"}'
 
 # Logging
 log:

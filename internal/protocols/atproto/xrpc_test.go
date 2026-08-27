@@ -52,8 +52,8 @@ func TestXRPCGetProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProfile: %v", err)
 	}
-	if profile["displayName"] != "Alice" {
-		t.Fatalf("displayName = %v", profile["displayName"])
+	if profile.DisplayName != "Alice" {
+		t.Fatalf("displayName = %q, want Alice", profile.DisplayName)
 	}
 }
 
