@@ -2,6 +2,7 @@ package solid
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -193,5 +194,50 @@ func TestAgentFromRequest(t *testing.T) {
 	req2 := req.WithContext(ctx)
 	if a := AgentFromRequest(req2); a.WebID != "https://alice.example.com/profile#me" {
 		t.Fatalf("agent WebID = %q", a.WebID)
+	}
+}
+
+// fakeTokenValidator returns a fixed subject for a valid token.
+type fakeTokenValidator struct {
+	subject string
+	err     error
+}
+
+func (f fakeTokenValidator) ValidateToken(ctx context.Context, token string) (string, error) {
+	return f.subject, f.err
+}
+
+// TestAgentFromRequestBearer verifies the server derives the agent from a
+// valid bearer token.
+func TestAgentFromRequestBearer(t *testing.T) {
+	s := &Server{Tokens: fakeTokenValidator{subject: "alice"}}
+
+	// Valid bearer token -> agent WebID = subject.
+	req := httptest.NewRequest("GET", "/", http.NoBody)
+	req.Header.Set("Authorization", "Bearer tok")
+	if a := s.agentFromRequest(req); a.WebID != "alice" {
+		t.Fatalf("agent WebID = %q, want alice", a.WebID)
+	}
+
+	// No token -> public agent.
+	req2 := httptest.NewRequest("GET", "/", http.NoBody)
+	if a := s.agentFromRequest(req2); a.WebID != "" {
+		t.Fatalf("no-token agent WebID = %q, want empty", a.WebID)
+	}
+
+	// Invalid token -> public agent.
+	s2 := &Server{Tokens: fakeTokenValidator{err: errors.New("invalid")}}
+	req3 := httptest.NewRequest("GET", "/", http.NoBody)
+	req3.Header.Set("Authorization", "Bearer bad")
+	if a := s2.agentFromRequest(req3); a.WebID != "" {
+		t.Fatalf("invalid-token agent WebID = %q, want empty", a.WebID)
+	}
+
+	// No TokenValidator configured -> falls back to context agent.
+	s3 := &Server{}
+	req4 := httptest.NewRequest("GET", "/", http.NoBody)
+	req4.Header.Set("Authorization", "Bearer x")
+	if a := s3.agentFromRequest(req4); a.WebID != "" {
+		t.Fatalf("no-validator agent WebID = %q, want empty", a.WebID)
 	}
 }

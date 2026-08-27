@@ -91,3 +91,31 @@ func TestScopesContains(t *testing.T) {
 		t.Fatal("r should not imply rw")
 	}
 }
+
+// TestSubjectValidatorValid verifies a valid token returns the subject.
+func TestSubjectValidatorValid(t *testing.T) {
+	_, as := newTestStores(t)
+	ctx := context.Background()
+	_ = as.PersistRefreshToken(ctx, "tok1", "alice", "client1", []string{"rw"})
+
+	v := &SubjectValidator{Auth: as}
+	subject, err := v.ValidateToken(ctx, "tok1")
+	if err != nil {
+		t.Fatalf("ValidateToken: %v", err)
+	}
+	if subject != "alice" {
+		t.Fatalf("subject = %q, want alice", subject)
+	}
+}
+
+// TestSubjectValidatorInvalid verifies invalid/empty tokens error.
+func TestSubjectValidatorInvalid(t *testing.T) {
+	_, as := newTestStores(t)
+	v := &SubjectValidator{Auth: as}
+	if _, err := v.ValidateToken(context.Background(), "bad"); err == nil {
+		t.Fatal("expected error for invalid token")
+	}
+	if _, err := v.ValidateToken(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty token")
+	}
+}
