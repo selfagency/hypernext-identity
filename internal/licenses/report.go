@@ -63,27 +63,11 @@ func FromGoMod(path string) ([]Dependency, error) {
 	inRequire := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "require (" {
-			inRequire = true
+		if isRequireBoundary(line, &inRequire) {
 			continue
 		}
-		if inRequire && line == ")" {
-			inRequire = false
-			continue
-		}
-		// Single-line require: "require github.com/x v1.0.0"
-		if !inRequire && strings.HasPrefix(line, "require ") {
-			line = strings.TrimPrefix(line, "require ")
-		}
-		if inRequire || strings.HasPrefix(line, "github.com/") || strings.HasPrefix(line, "go.hacdias.com/") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				deps = append(deps, Dependency{
-					Path:    fields[0],
-					Version: fields[1],
-					License: LicenseFor(fields[0]),
-				})
-			}
+		if dep, ok := parseRequireLine(line, inRequire); ok {
+			deps = append(deps, dep)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -91,6 +75,41 @@ func FromGoMod(path string) ([]Dependency, error) {
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].Path < deps[j].Path })
 	return deps, nil
+}
+
+// isRequireBoundary handles the "require (" ... ")" block delimiters and
+// returns true if the line was a boundary (not a dependency).
+func isRequireBoundary(line string, inRequire *bool) bool {
+	if line == "require (" {
+		*inRequire = true
+		return true
+	}
+	if *inRequire && line == ")" {
+		*inRequire = false
+		return true
+	}
+	return false
+}
+
+// parseRequireLine parses a single dependency line. It handles both block
+// lines ("github.com/x v1.0.0") and single-line requires
+// ("require github.com/x v1.0.0").
+func parseRequireLine(line string, inRequire bool) (Dependency, bool) {
+	if !inRequire && strings.HasPrefix(line, "require ") {
+		line = strings.TrimPrefix(line, "require ")
+	}
+	if !inRequire && !strings.HasPrefix(line, "github.com/") && !strings.HasPrefix(line, "go.hacdias.com/") {
+		return Dependency{}, false
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return Dependency{}, false
+	}
+	return Dependency{
+		Path:    fields[0],
+		Version: fields[1],
+		License: LicenseFor(fields[0]),
+	}, true
 }
 
 // RenderMarkdown renders the report as a markdown table.
