@@ -45,6 +45,18 @@ func (s *Store) GetTenantByHandle(ctx context.Context, handle string) (*Tenant, 
 	return &t, err
 }
 
+// GetTenantByDID returns a tenant by its DID.
+func (s *Store) GetTenantByDID(ctx context.Context, did string) (*Tenant, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, handle, did_method, did, created_at FROM tenants WHERE did = ?`, did)
+	var t Tenant
+	err := row.Scan(&t.ID, &t.Handle, &t.DIDMethod, &t.DID, &t.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &t, err
+}
+
 // ListTenants returns all tenants.
 func (s *Store) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,

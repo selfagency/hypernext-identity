@@ -94,6 +94,24 @@ func TestGetProfileNotFound(t *testing.T) {
 	}
 }
 
+// TestGetProfileByDID verifies getProfile resolves a did: actor correctly
+// (A1). The current code passes the DID to GetTenantByHandle, which fails.
+func TestGetProfileByDID(t *testing.T) {
+	s := newTestStore(t)
+	_ = s.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web", DID: "did:web:alice.example.com"})
+
+	x := &XRPCServer{Store: s}
+	req := httptest.NewRequest("GET", "/xrpc/app.bsky.actor.getProfile?actor=did:web:alice.example.com", http.NoBody)
+	rec := httptest.NewRecorder()
+	x.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "alice.example.com") {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
 // TestUnsupportedMethod verifies an unknown XRPC method errors.
 func TestUnsupportedMethod(t *testing.T) {
 	s := newTestStore(t)

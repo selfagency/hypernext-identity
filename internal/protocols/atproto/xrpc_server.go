@@ -54,13 +54,14 @@ func (s *XRPCServer) getProfile(w http.ResponseWriter, r *http.Request) {
 		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "actor is required")
 		return
 	}
-	// actor may be a handle or DID.
-	handle := actor
+	// actor may be a handle or DID. Resolve each correctly (A1).
+	var t *store.Tenant
+	var err error
 	if strings.HasPrefix(actor, "did:") {
-		// Resolve DID to handle via the tenant store (best-effort).
-		handle = actor
+		t, err = s.Store.GetTenantByDID(r.Context(), actor)
+	} else {
+		t, err = s.Store.GetTenantByHandle(r.Context(), actor)
 	}
-	t, err := s.Store.GetTenantByHandle(r.Context(), handle)
 	if err != nil {
 		writeXRPCError(w, http.StatusNotFound, "ActorNotFound", "actor not found")
 		return

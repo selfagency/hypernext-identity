@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Verifier verifies an HTTP Message Signature on a request.
@@ -26,12 +28,14 @@ type rfc9421Verifier struct{}
 type cavageVerifier struct{}
 
 // VerifyDoubleKnock verifies a request signature, trying RFC 9421 first and
-// falling back to cavage-12 (mirrors Fedify's double-knocking).
+// falling back to cavage-12 ONLY when no RFC 9421 Signature-Input header is
+// present. If Signature-Input is present but invalid, verification fails
+// closed (no silent downgrade).
 func VerifyDoubleKnock(r *http.Request, pubKeyPEM string, rfc9421, cavage12 Verifier) error {
 	if r.Header.Get("Signature-Input") != "" {
-		if err := rfc9421.Verify(r, pubKeyPEM); err == nil {
-			return nil
-		}
+		// RFC 9421 is authoritative when its header is present; a malformed
+		// RFC signature must not fall back to cavage.
+		return rfc9421.Verify(r, pubKeyPEM)
 	}
 	return cavage12.Verify(r, pubKeyPEM)
 }
@@ -52,9 +56,20 @@ func (rfc9421Verifier) Verify(r *http.Request, pubKeyPEM string) error {
 
 	// Parse the signature input: `sig1=("(request-target)" "host" "date");created=...`
 	// and the signature: `sig1=:base64:`
-	sigName, covered, err := parseSignatureInput(sigInput)
+	sigName, covered, created, expires, err := parseSignatureInput(sigInput)
 	if err != nil {
 		return err
+	}
+	// Enforce created/expires freshness (replay protection).
+	now := time.Now()
+	if created > 0 && now.Before(time.Unix(created, 0).Add(-clockSkew)) {
+		return errors.New("signature created in the future")
+	}
+	if created > 0 && now.After(time.Unix(created, 0).Add(maxSignatureAge)) {
+		return errors.New("signature created too long ago")
+	}
+	if expires > 0 && now.After(time.Unix(expires, 0).Add(clockSkew)) {
+		return errors.New("signature expired")
 	}
 	sigValue, err := parseSignature(sig, sigName)
 	if err != nil {
@@ -78,6 +93,12 @@ func (rfc9421Verifier) Verify(r *http.Request, pubKeyPEM string) error {
 	}
 	return nil
 }
+
+// clockSkew is the tolerance for created/expires timestamps.
+const clockSkew = 5 * time.Minute
+
+// maxSignatureAge is the maximum age of a signature's created timestamp.
+const maxSignatureAge = 5 * time.Minute
 
 // Verify implements cavage-12 HTTP Signatures.
 func (cavageVerifier) Verify(r *http.Request, pubKeyPEM string) error {
@@ -118,12 +139,13 @@ func (cavageVerifier) Verify(r *http.Request, pubKeyPEM string) error {
 	return nil
 }
 
-// parseSignatureInput parses an RFC 9421 Signature-Input header.
-func parseSignatureInput(sigInput string) (name string, covered []string, err error) {
-	// Format: key1=("a" "b");created=123
+// parseSignatureInput parses an RFC 9421 Signature-Input header, returning
+// the signature name, covered components, and created/expires timestamps.
+func parseSignatureInput(sigInput string) (name string, covered []string, created, expires int64, err error) {
+	// Format: key1=("a" "b");created=123;expires=456
 	eq := strings.Index(sigInput, "=")
 	if eq < 0 {
-		return "", nil, errors.New("invalid signature-input")
+		return "", nil, 0, 0, errors.New("invalid signature-input")
 	}
 	name = strings.TrimSpace(sigInput[:eq])
 	rest := sigInput[eq+1:]
@@ -131,13 +153,24 @@ func parseSignatureInput(sigInput string) (name string, covered []string, err er
 	open := strings.Index(rest, "(")
 	closeIdx := strings.Index(rest, ")")
 	if open < 0 || closeIdx < 0 || closeIdx <= open {
-		return "", nil, errors.New("invalid signature-input components")
+		return "", nil, 0, 0, errors.New("invalid signature-input components")
 	}
 	compStr := rest[open+1 : closeIdx]
 	for _, c := range strings.Fields(compStr) {
 		covered = append(covered, strings.Trim(c, `"`))
 	}
-	return name, covered, nil
+	// Parse the ;created= and ;expires= parameters after the component list.
+	params := rest[closeIdx+1:]
+	for _, p := range strings.Split(params, ";") {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "created=") {
+			created, _ = strconv.ParseInt(strings.TrimSpace(p[len("created="):]), 10, 64)
+		}
+		if strings.HasPrefix(p, "expires=") {
+			expires, _ = strconv.ParseInt(strings.TrimSpace(p[len("expires="):]), 10, 64)
+		}
+	}
+	return name, covered, created, expires, nil
 }
 
 // parseSignature extracts the base64 signature for a named key.
@@ -158,7 +191,8 @@ func parseSignature(sig, name string) ([]byte, error) {
 	return nil, errors.New("signature not found")
 }
 
-// buildSigningString builds the RFC 9421 signing string.
+// buildSigningString builds the RFC 9421 signing string. Structured field
+// names like @method are emitted in their quoted form ("@method": GET).
 func buildSigningString(r *http.Request, covered []string) (string, error) {
 	var sb strings.Builder
 	for i, c := range covered {
@@ -167,11 +201,11 @@ func buildSigningString(r *http.Request, covered []string) (string, error) {
 		}
 		switch c {
 		case "@method":
-			sb.WriteString("@method: " + r.Method)
+			sb.WriteString(`"@method": ` + r.Method)
 		case "@target-uri":
-			sb.WriteString("@target-uri: " + r.URL.String())
+			sb.WriteString(`"@target-uri": ` + r.URL.String())
 		case "@request-target":
-			sb.WriteString("@request-target: " + strings.ToLower(r.Method) + " " + r.URL.RequestURI())
+			sb.WriteString(`"@request-target": ` + strings.ToLower(r.Method) + " " + r.URL.RequestURI())
 		case "host":
 			sb.WriteString("host: " + r.Host)
 		case "date":
