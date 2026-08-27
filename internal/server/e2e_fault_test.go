@@ -52,7 +52,7 @@ func TestE2EFaultInjection(t *testing.T) {
 
 	// Mint a signed access token so authorization passes; the failure is in
 	// storage.
-	token, err := auth.MintAccessToken(ts.srv.authStore.SigningKey(), "https://alice.example.com/profile/card#me", []string{"rw"}, auth.AccessTokenTTL)
+	token, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), "https://alice.example.com/profile/card#me", []string{"rw"}, auth.AccessTokenTTL)
 	if err != nil {
 		t.Fatalf("mint token: %v", err)
 	}

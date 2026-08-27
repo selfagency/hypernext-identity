@@ -1,0 +1,58 @@
+package server
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// TestOIDCDiscovery verifies the OIDC provider is reachable on the identity
+// host and serves discovery metadata with the correct issuer.
+func TestOIDCDiscovery(t *testing.T) {
+	ts := startTestServer(t, &Config{}, false)
+
+	// Discovery on the identity host.
+	status, body := ts.get(t, "/.well-known/openid-configuration", "id.example.com")
+	if status != 200 {
+		t.Fatalf("discovery status = %d, want 200 (body %q)", status, body)
+	}
+	var disc map[string]any
+	if err := json.Unmarshal([]byte(body), &disc); err != nil {
+		t.Fatalf("discovery not JSON: %v", err)
+	}
+	if iss, _ := disc["issuer"].(string); iss != "https://id.example.com" {
+		t.Fatalf("issuer = %q, want https://id.example.com", iss)
+	}
+	// The provider must advertise the standard endpoints.
+	for _, k := range []string{"authorization_endpoint", "token_endpoint", "jwks_uri", "userinfo_endpoint"} {
+		if _, ok := disc[k]; !ok {
+			t.Fatalf("discovery missing %q", k)
+		}
+	}
+}
+
+// TestOIDCJWKS verifies the JWKS endpoint serves the signing key.
+func TestOIDCJWKS(t *testing.T) {
+	ts := startTestServer(t, &Config{}, false)
+
+	status, body := ts.get(t, "/keys", "id.example.com")
+	if status != 200 {
+		t.Fatalf("jwks status = %d, want 200 (body %q)", status, body)
+	}
+	if !strings.Contains(body, "RSA") && !strings.Contains(body, "keys") {
+		t.Fatalf("jwks body = %q", body)
+	}
+}
+
+// TestOIDCNotOnTenantHost verifies the OIDC provider is NOT served on a
+// tenant host (only the identity host serves it).
+func TestOIDCNotOnTenantHost(t *testing.T) {
+	ts := startTestServer(t, &Config{}, true)
+
+	// A tenant host must not serve OIDC discovery (it serves the protocol
+	// mux, which 404s unknown paths).
+	status, _ := ts.get(t, "/.well-known/openid-configuration", "alice.example.com")
+	if status == 200 {
+		t.Fatal("OIDC discovery served on tenant host")
+	}
+}

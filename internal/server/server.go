@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/selfagency/sovereign/internal/auth"
-	"github.com/selfagency/sovereign/internal/authstore"
 	"github.com/selfagency/sovereign/internal/endpoints"
 	"github.com/selfagency/sovereign/internal/protocols/activitypub"
 	"github.com/selfagency/sovereign/internal/protocols/atproto"
@@ -35,7 +35,7 @@ import (
 type Server struct {
 	cfg       *Config
 	store     *store.Store
-	authStore *authstore.Store
+	authStore *auth.SQLStore
 	blobs     storage.Backend
 	mux       http.Handler
 	logger    *slog.Logger
@@ -58,12 +58,16 @@ func New(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
-	// Build the auth store (persists the OIDC signing key + refresh tokens).
-	mem, err := auth.NewMemoryStore()
-	if err != nil {
-		return nil, fmt.Errorf("new auth store: %w", err)
+	// Seed the identity host as a tenant so the tenant middleware resolves
+	// it and the OIDC provider can be mounted there.
+	identityHost := "id." + cfg.Domain
+	if err := seedIdentityTenant(context.Background(), st, identityHost); err != nil {
+		return nil, fmt.Errorf("seed identity tenant: %w", err)
 	}
-	authStore, err := authstore.New(context.Background(), mem, st)
+
+	// Build the SQLite-backed OIDC storage (users, clients, signing key,
+	// refresh tokens).
+	authStore, err := auth.NewSQLStore(context.Background(), st)
 	if err != nil {
 		return nil, fmt.Errorf("open auth store: %w", err)
 	}
@@ -77,6 +81,24 @@ func New(cfg *Config) (*Server, error) {
 	s := &Server{cfg: cfg, store: st, authStore: authStore, blobs: blobs, logger: logger}
 	s.buildRouter()
 	return s, nil
+}
+
+// seedIdentityTenant ensures the identity host (id.<domain>) exists as a
+// tenant row so the tenant middleware resolves it. It is idempotent.
+func seedIdentityTenant(ctx context.Context, st *store.Store, host string) error {
+	_, err := st.GetTenantByHandle(ctx, host)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return st.CreateTenant(ctx, &store.Tenant{
+		ID:        "identity",
+		Handle:    host,
+		DIDMethod: "web",
+		DID:       "did:web:" + host,
+	})
 }
 
 // Close releases the store.
@@ -112,7 +134,9 @@ func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error)
 	}
 }
 
-// buildRouter wires all protocol handlers onto the mux.
+// buildRouter wires all protocol handlers onto the mux. The OIDC provider is
+// served only on the identity host (id.<domain>); all other hosts serve the
+// protocol mux.
 func (s *Server) buildRouter() {
 	mux := http.NewServeMux()
 
@@ -126,7 +150,7 @@ func (s *Server) buildRouter() {
 	// remoteStorage.
 	rs := &remotestorage.Server{
 		Backend: backendFor,
-		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKey()},
+		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKeyMaterial()},
 	}
 	mux.Handle("/rs/", rs)
 
@@ -134,7 +158,7 @@ func (s *Server) buildRouter() {
 	solidSrv := &solid.Server{
 		Backend: backendFor,
 		ACL:     &wiring.ACLChecker{Store: s.store},
-		Tokens:  &wiring.SubjectValidator{Key: s.authStore.SigningKey()},
+		Tokens:  &wiring.SubjectValidator{Key: s.authStore.SigningKeyMaterial()},
 	}
 	mux.Handle("/solid/", solidSrv)
 
@@ -181,12 +205,47 @@ func (s *Server) buildRouter() {
 	xrpc := &atproto.XRPCServer{Store: s.store}
 	mux.Handle("/xrpc/", xrpc)
 
+	// OIDC provider, served only on the identity host.
+	issuer := "https://" + identityHost
+	provider, err := auth.NewProvider(issuer, s.authStore)
+	if err != nil {
+		s.logger.Error("oidc provider init failed", "err", err)
+	}
+
 	// IndieAuth.
 	bridge := indieauth.NewBridge(true, nil)
 	_ = bridge
 
+	// Host-based dispatch: the identity host serves the OIDC provider;
+	// every other host serves the protocol mux.
+	var root http.Handler = mux
+	if provider != nil {
+		root = hostRouter{
+			identityHost: identityHost,
+			identity:     provider.Handler(),
+			other:        mux,
+		}
+	}
+
 	// Tenant middleware wraps the whole mux.
-	s.mux = tenant.Middleware(s.tenantStore())(mux)
+	s.mux = tenant.Middleware(s.tenantStore())(root)
+}
+
+// hostRouter dispatches to the identity handler on the identity host and the
+// protocol mux on every other host.
+type hostRouter struct {
+	identityHost string
+	identity     http.Handler
+	other        http.Handler
+}
+
+func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	host := strings.Split(r.Host, ":")[0]
+	if host == h.identityHost {
+		h.identity.ServeHTTP(w, r)
+		return
+	}
+	h.other.ServeHTTP(w, r)
 }
 
 // tenantStore resolves a host to a tenant from the SQLite store.
