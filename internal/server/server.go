@@ -14,11 +14,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/selfagency/sovereign/internal/admin"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
+	"github.com/selfagency/sovereign/internal/moderation"
 	"github.com/selfagency/sovereign/internal/protocols/activitypub"
 	"github.com/selfagency/sovereign/internal/protocols/atproto"
-	"github.com/selfagency/sovereign/internal/protocols/indieauth"
 	"github.com/selfagency/sovereign/internal/protocols/ipfspin"
 	"github.com/selfagency/sovereign/internal/protocols/nodeinfo"
 	"github.com/selfagency/sovereign/internal/protocols/remotestorage"
@@ -218,9 +219,31 @@ func (s *Server) buildRouter() {
 		s.logger.Error("webauthn init failed", "err", err)
 	}
 
-	// IndieAuth.
-	bridge := indieauth.NewBridge(true, nil)
-	_ = bridge
+	// Admin guard: validates a bearer access token and requires the subject
+	// to be an instance admin. Protects the admin backup + moderation routes.
+	adminGuard := &wiring.AdminGuard{Key: s.authStore.SigningKeyMaterial(), Store: s.store}
+
+	// Admin backup config (GET form / POST apply).
+	backupHandler := &admin.BackupHandler{
+		Apply: func(cfg admin.BackupConfig) error {
+			if err := admin.ValidateBackupConfig(cfg); err != nil {
+				return err
+			}
+			s.logger.Info("backup config applied", "schedule", cfg.Schedule, "destination", cfg.Destination, "prefix", cfg.Prefix)
+			return nil
+		},
+	}
+
+	// Admin moderation takedown with a persistent audit log.
+	takedown := &moderation.TakedownHandler{
+		Backend: backendFor,
+		Log:     moderation.NewStoreAuditLog(s.store),
+		AdminAuthorizer: func(r *http.Request) bool {
+			return adminGuard.Authorize(r)
+		},
+	}
+
+	// IndieAuth is a separate phase; the bridge is not wired yet.
 
 	// Host-based dispatch: the identity host serves the OIDC provider and
 	// WebAuthn endpoints; every other host serves the protocol mux.
@@ -236,6 +259,9 @@ func (s *Server) buildRouter() {
 			identity.Handle("/webauthn/login/begin", http.HandlerFunc(waHandler.LoginBegin))
 			identity.Handle("/webauthn/login/finish", http.HandlerFunc(waHandler.LoginFinish))
 		}
+		// Admin routes on the identity host, behind the admin guard.
+		identity.Handle("/admin/backup", adminGuard.Middleware(backupHandler))
+		identity.Handle("/admin/moderation/takedown", adminGuard.Middleware(takedown))
 		root = hostRouter{
 			identityHost: identityHost,
 			identity:     identity,
