@@ -1,3 +1,4 @@
+---
 # Codacy configuration.
 # Exclude AGENTS.md from static analysis: it is an agent-guidance document,
 # not code, and Codacy's doc-quality rules (acronyms, vague instructions,
