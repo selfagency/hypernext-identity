@@ -102,6 +102,18 @@ func TestErrNoChecks(t *testing.T) {
 	}
 }
 
+// TestNewValidator verifies the default validator is wired with real
+// resolvers and https scheme.
+func TestNewValidator(t *testing.T) {
+	v := NewValidator()
+	if v.Scheme != "https" {
+		t.Fatalf("scheme = %q, want https", v.Scheme)
+	}
+	if v.HTTPClient == nil || v.LookupTXT == nil || v.LookupIP == nil {
+		t.Fatal("default validator missing resolvers")
+	}
+}
+
 // TestValidateWellKnownSSRF verifies the well-known check rejects a handle
 // resolving to a private/loopback address (S14).
 func TestValidateWellKnownSSRF(t *testing.T) {
