@@ -94,10 +94,10 @@ func localpartFromKey(k *store.PublicKey) string {
 }
 
 // wkdHash computes the z-base-32 WKD hash of a localpart (SHA-1, then
-// z-base-32 encoding per the WKD spec).
+// z-base-32 encoding per the WKD spec). SHA-1 is mandated by the WKD spec
+// for the localpart hash; it is not used for security here.
 func wkdHash(localpart string) string {
-	// #nosec G401 -- SHA-1 is mandated by the WKD spec for the z-base-32
-	// hash; it is not used for security here.
+	// #nosec G401
 	sum := sha1.Sum([]byte(localpart))
 	const alphabet = "ybndrfg8ejkmcpqxot1uwisza345h769"
 	var out []byte
