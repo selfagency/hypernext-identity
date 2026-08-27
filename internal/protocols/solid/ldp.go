@@ -16,6 +16,8 @@ type Server struct {
 	Backend func(tenantID string) storage.Backend
 	// ACL authorizes access.
 	ACL ACLChecker
+	// Tokens validates bearer tokens to derive the authenticated agent.
+	Tokens TokenValidator
 }
 
 // containerType is the LDP BasicContainer link relation.
@@ -28,7 +30,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	agent := AgentFromRequest(r)
+	agent := s.agentFromRequest(r)
 	backend := s.Backend(t.ID)
 	key := r.URL.Path
 
@@ -111,6 +113,24 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, backend st
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// agentFromRequest derives the authenticated agent from the request. If a
+// bearer token is present and valid, the subject becomes the agent's WebID;
+// otherwise the public agent is used.
+func (s *Server) agentFromRequest(r *http.Request) Agent {
+	if s.Tokens == nil {
+		return AgentFromRequest(r)
+	}
+	auth := r.Header.Get("Authorization")
+	if len(auth) < 7 || auth[:7] != "Bearer " {
+		return AgentFromRequest(r)
+	}
+	subject, err := s.Tokens.ValidateToken(r.Context(), auth[7:])
+	if err != nil {
+		return AgentFromRequest(r)
+	}
+	return Agent{WebID: subject}
 }
 
 // writeContainerTurtle renders a container listing as Turtle.

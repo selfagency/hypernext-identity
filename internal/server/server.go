@@ -116,9 +116,11 @@ func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error)
 func (s *Server) buildRouter() {
 	mux := http.NewServeMux()
 
-	// Tenant-scoped blob backend resolver.
+	// Tenant-scoped blob backend resolver. Each tenant's keys are prefixed
+	// with the tenant ID on the shared backend, so tenants cannot read or
+	// write each other's data (IDOR boundary). Works for both FS and S3.
 	backendFor := func(tenantID string) storage.Backend {
-		return s.blobs
+		return &storage.Prefixed{Backend: s.blobs, Prefix: tenantID}
 	}
 
 	// remoteStorage.
@@ -132,6 +134,7 @@ func (s *Server) buildRouter() {
 	solidSrv := &solid.Server{
 		Backend: backendFor,
 		ACL:     &wiring.ACLChecker{Store: s.store},
+		Tokens:  &wiring.SubjectValidator{Auth: s.authStore},
 	}
 	mux.Handle("/solid/", solidSrv)
 

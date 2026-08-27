@@ -38,6 +38,29 @@ func (v *TokenValidator) ValidateToken(ctx context.Context, token string) ([]str
 // Ensure TokenValidator satisfies the interface.
 var _ remotestorage.TokenValidator = (*TokenValidator)(nil)
 
+// SubjectValidator validates a bearer token and returns the authenticated
+// subject. It implements solid.TokenValidator, deriving the agent's WebID
+// from the token's subject.
+type SubjectValidator struct {
+	Auth *authstore.Store
+}
+
+// ValidateToken returns the subject for a bearer token, or an error if the
+// token is invalid.
+func (v *SubjectValidator) ValidateToken(ctx context.Context, token string) (string, error) {
+	if token == "" {
+		return "", errors.New("wiring: empty token")
+	}
+	subject, _, _, err := v.Auth.LoadRefreshToken(ctx, token)
+	if err != nil {
+		return "", errors.New("wiring: invalid token")
+	}
+	return subject, nil
+}
+
+// Ensure SubjectValidator satisfies the interface.
+var _ solid.TokenValidator = (*SubjectValidator)(nil)
+
 // ACLChecker authorizes Solid LDP access based on tenant ownership.
 // It implements solid.ACLChecker.
 type ACLChecker struct {
