@@ -105,6 +105,19 @@ func (s *Store) migrate(ctx context.Context) error {
 			UNIQUE(tenant_id, service, claim_location)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_proof_claims_recheck ON proof_claims(status, last_checked_at)`,
+		`CREATE TABLE IF NOT EXISTS auth_signing_keys (
+			id         TEXT PRIMARY KEY,
+			key_pem    TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+			token      TEXT PRIMARY KEY,
+			subject    TEXT NOT NULL,
+			client_id  TEXT NOT NULL,
+			scopes     TEXT NOT NULL,
+			auth_time  TIMESTAMP NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {

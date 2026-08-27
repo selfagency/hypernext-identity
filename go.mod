@@ -7,12 +7,15 @@ require (
 	github.com/bluesky-social/indigo v0.0.0-20260826171833-0ae16078d6a6
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-webauthn/webauthn v0.17.4
+	github.com/ipfs/go-block-format v0.2.0
 	github.com/ipfs/go-cid v0.6.2
+	github.com/ipfs/go-ipld-format v0.6.0
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/zitadel/oidc/v3 v3.49.2
 	go.hacdias.com/indielib v0.5.0
 	golang.org/x/crypto v0.55.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
@@ -39,7 +42,6 @@ require (
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
-	github.com/ipfs/go-block-format v0.2.0 // indirect
 	github.com/ipfs/go-blockservice v0.5.2 // indirect
 	github.com/ipfs/go-datastore v0.6.0 // indirect
 	github.com/ipfs/go-ipfs-blockstore v1.3.1 // indirect
@@ -47,7 +49,6 @@ require (
 	github.com/ipfs/go-ipfs-exchange-interface v0.2.1 // indirect
 	github.com/ipfs/go-ipfs-util v0.0.3 // indirect
 	github.com/ipfs/go-ipld-cbor v0.1.0 // indirect
-	github.com/ipfs/go-ipld-format v0.6.0 // indirect
 	github.com/ipfs/go-ipld-legacy v0.2.1 // indirect
 	github.com/ipfs/go-log v1.0.5 // indirect
 	github.com/ipfs/go-log/v2 v2.5.1 // indirect
@@ -114,7 +115,6 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.57.0 // indirect
 	willnorris.com/go/microformats v1.2.1-0.20260218044424-22f0c2eff25b // indirect
 	willnorris.com/go/webmention v0.0.0-20250531043116-33a44c5fb605 // indirect
 )
