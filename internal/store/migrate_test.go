@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -80,6 +81,41 @@ func TestAccountsTable(t *testing.T) {
 		`INSERT INTO accounts (id, tenant_id, did) VALUES (?, ?, ?)`,
 		"a2", "no-such-tenant", "did:web:x"); err == nil {
 		t.Fatal("expected FK violation for dangling tenant_id")
+	}
+}
+
+// TestAccountCRUD verifies CreateAccount and AccountByWebID.
+func TestAccountCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
+	if err := s.CreateAccount(ctx, &Account{
+		ID: "a1", TenantID: "t1", DID: "did:web:alice.example.com",
+		WebID: "https://alice.example.com/profile/card#me",
+	}); err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	// Lookup by WebID.
+	got, err := s.AccountByWebID(ctx, "https://alice.example.com/profile/card#me")
+	if err != nil {
+		t.Fatalf("AccountByWebID: %v", err)
+	}
+	if got.TenantID != "t1" || got.DID != "did:web:alice.example.com" {
+		t.Fatalf("account = %+v", got)
+	}
+
+	// Duplicate (tenant_id, did) rejected.
+	if err := s.CreateAccount(ctx, &Account{ID: "a2", TenantID: "t1", DID: "did:web:alice.example.com"}); !errors.Is(err, ErrDuplicateAccount) {
+		t.Fatalf("duplicate = %v, want ErrDuplicateAccount", err)
+	}
+
+	// Unknown WebID -> ErrNotFound.
+	if _, err := s.AccountByWebID(ctx, "https://nobody.example.com/profile#me"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown webid = %v, want ErrNotFound", err)
 	}
 }
 

@@ -133,3 +133,19 @@ func TestPrefixedRejectsTraversal(t *testing.T) {
 		t.Fatal("alice read bob's blob via traversal")
 	}
 }
+
+// TestPrefixedRejectsTraversalOnAllOps verifies Delete and List also reject
+// traversal keys (the error path of key()).
+func TestPrefixedRejectsTraversalOnAllOps(t *testing.T) {
+	root := t.TempDir()
+	base := &FS{Root: root}
+	alice := &Prefixed{Backend: base, Prefix: "alice"}
+	ctx := context.Background()
+
+	if err := alice.Delete(ctx, "../bob/x"); err == nil {
+		t.Fatal("Delete with traversal key succeeded")
+	}
+	if _, err := alice.List(ctx, "../bob"); err == nil {
+		t.Fatal("List with traversal key succeeded")
+	}
+}
