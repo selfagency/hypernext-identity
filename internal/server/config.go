@@ -11,67 +11,69 @@ import (
 )
 
 // Config is the server configuration, loaded from config.yml.
+// Both yaml and mapstructure tags are present: yaml for the file loader,
+// mapstructure for Viper's Unmarshal (the CLI path).
 type Config struct {
-	Domain       string        `yaml:"domain"`
-	IdentityHost string        `yaml:"identity_host"`
-	DataDir      string        `yaml:"data_dir"`
-	Storage      StorageConfig `yaml:"storage"`
-	SQLite       SQLiteConfig  `yaml:"sqlite"`
-	TLS          TLSConfig     `yaml:"tls"`
-	IPFS         IPFSConfig    `yaml:"ipfs"`
-	Atproto      AtprotoConfig `yaml:"atproto"`
-	Backup       BackupConfig  `yaml:"backup"`
-	Log          LogConfig     `yaml:"log"`
+	Domain       string        `yaml:"domain" mapstructure:"domain"`
+	IdentityHost string        `yaml:"identity_host" mapstructure:"identity_host"`
+	DataDir      string        `yaml:"data_dir" mapstructure:"data_dir"`
+	Storage      StorageConfig `yaml:"storage" mapstructure:"storage"`
+	SQLite       SQLiteConfig  `yaml:"sqlite" mapstructure:"sqlite"`
+	TLS          TLSConfig     `yaml:"tls" mapstructure:"tls"`
+	IPFS         IPFSConfig    `yaml:"ipfs" mapstructure:"ipfs"`
+	Atproto      AtprotoConfig `yaml:"atproto" mapstructure:"atproto"`
+	Backup       BackupConfig  `yaml:"backup" mapstructure:"backup"`
+	Log          LogConfig     `yaml:"log" mapstructure:"log"`
 }
 
 // StorageConfig configures the protocol blob backend.
 type StorageConfig struct {
-	Backend string    `yaml:"backend"` // "fs" | "s3"
-	S3      *S3Config `yaml:"s3"`
+	Backend string    `yaml:"backend" mapstructure:"backend"` // "fs" | "s3"
+	S3      *S3Config `yaml:"s3" mapstructure:"s3"`
 }
 
 // S3Config configures an S3-compatible blob backend.
 type S3Config struct {
-	Endpoint  string `yaml:"endpoint"`
-	Bucket    string `yaml:"bucket"`
-	AccessKey string `yaml:"access_key"`
-	SecretKey string `yaml:"secret_key"`
-	Region    string `yaml:"region"`
+	Endpoint  string `yaml:"endpoint" mapstructure:"endpoint"`
+	Bucket    string `yaml:"bucket" mapstructure:"bucket"`
+	AccessKey string `yaml:"access_key" mapstructure:"access_key"`
+	SecretKey string `yaml:"secret_key" mapstructure:"secret_key"`
+	Region    string `yaml:"region" mapstructure:"region"`
 }
 
 // SQLiteConfig configures the account-data store.
 type SQLiteConfig struct {
-	Mode   string `yaml:"mode"` // "per_tenant" | "single"
+	Mode   string `yaml:"mode" mapstructure:"mode"` // "per_tenant" | "single"
 	Single *struct {
-		Path string `yaml:"path"`
-	} `yaml:"single"`
+		Path string `yaml:"path" mapstructure:"path"`
+	} `yaml:"single" mapstructure:"single"`
 }
 
 // TLSConfig configures ACME/certmagic.
 type TLSConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Email   string `yaml:"email"`
+	Enabled bool   `yaml:"enabled" mapstructure:"enabled"`
+	Email   string `yaml:"email" mapstructure:"email"`
 }
 
 // IPFSConfig configures the IPFS pinning broker.
 type IPFSConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
 }
 
 // AtprotoConfig configures the PDS.
 type AtprotoConfig struct {
-	DIDMethod string `yaml:"did_method"`
+	DIDMethod string `yaml:"did_method" mapstructure:"did_method"`
 }
 
 // BackupConfig configures scheduled backups.
 type BackupConfig struct {
-	CronExpr string `yaml:"cron_expr"`
+	CronExpr string `yaml:"cron_expr" mapstructure:"cron_expr"`
 }
 
 // LogConfig configures logging.
 type LogConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level  string `yaml:"level" mapstructure:"level"`
+	Format string `yaml:"format" mapstructure:"format"`
 }
 
 // LoadConfig reads and parses a YAML config file.
