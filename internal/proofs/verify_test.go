@@ -262,6 +262,58 @@ func TestVerifyHTTPBodySplitToken(t *testing.T) {
 	}
 }
 
+// TestVerifyHTTPBodyTooManyRedirects verifies the redirect cap is enforced
+// (S8).
+func TestVerifyHTTPBodyTooManyRedirects(t *testing.T) {
+	// A server that redirects to itself forever.
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	host := hostFromURL(srv.URL)
+	v := &Verifier{
+		HTTPClient: srv.Client(),
+		Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+			host: {{IP: net.ParseIP("93.184.216.34")}},
+		}},
+	}
+	res, err := v.Verify(context.Background(), &Claim{
+		Service:       "custom_url",
+		ClaimLocation: srv.URL,
+		ExpectedToken: "abc123",
+	})
+	if err == nil {
+		t.Fatalf("expected error for too many redirects (status %s)", res.Status)
+	}
+}
+
+// TestVerifyHTTPBodyFetchError verifies a fetch error (e.g. connection
+// refused) is surfaced (S8).
+func TestVerifyHTTPBodyFetchError(t *testing.T) {
+	// A closed server -> connection refused.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+
+	host := hostFromURL(url)
+	v := &Verifier{
+		HTTPClient: &http.Client{},
+		Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+			host: {{IP: net.ParseIP("93.184.216.34")}},
+		}},
+	}
+	res, err := v.Verify(context.Background(), &Claim{
+		Service:       "custom_url",
+		ClaimLocation: url,
+		ExpectedToken: "abc123",
+	})
+	if err == nil {
+		t.Fatalf("expected fetch error (status %s)", res.Status)
+	}
+}
+
 // TestIsBlockedIP verifies IP classification.
 func TestIsBlockedIP(t *testing.T) {
 	blocked := []string{"10.0.0.1", "127.0.0.1", "169.254.169.254", "192.168.1.1", "fe80::1"}
