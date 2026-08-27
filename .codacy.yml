@@ -5,3 +5,12 @@
 exclude_paths:
   - "AGENTS.md"
   - "AGENTS.original.md"
+
+# Per-tool configuration. gosec flags the WKD z-base-32 hash (SHA-1) as
+# insecure, but SHA-1 is mandated by the WKD spec for the localpart hash and
+# is not used for security. Exclude the endpoints package from gosec's
+# weak-crypto check.
+engines:
+  gosec:
+    exclude_paths:
+      - "internal/endpoints/endpoints.go"
