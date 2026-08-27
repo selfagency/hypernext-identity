@@ -10,7 +10,13 @@ import (
 	"testing"
 
 	"github.com/hypernext/identity/internal/storage"
+	"github.com/hypernext/identity/internal/tenant"
 )
+
+// withTenant wraps a request context with a tenant.
+func withTenant(r *http.Request, id string) *http.Request {
+	return r.WithContext(tenant.WithTenant(r.Context(), &tenant.Tenant{ID: id, Handle: id + ".example.com"}))
+}
 
 // TestTakedown verifies a takedown deletes the resource and logs it.
 func TestTakedown(t *testing.T) {
@@ -22,9 +28,10 @@ func TestTakedown(t *testing.T) {
 	log := &MemoryAuditLog{}
 	h := &TakedownHandler{Backend: func(string) storage.Backend { return fs }, Log: log}
 
-	form := url.Values{"resource": {"posts/1"}, "reason": {"spam"}, "tenant": {"t1"}}
+	form := url.Values{"resource": {"posts/1"}, "reason": {"spam"}}
 	req := httptest.NewRequest("POST", "/moderation/takedown", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withTenant(req, "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -46,9 +53,10 @@ func TestTakedown(t *testing.T) {
 func TestTakedownMissingResource(t *testing.T) {
 	fs := &storage.FS{Root: t.TempDir()}
 	h := &TakedownHandler{Backend: func(string) storage.Backend { return fs }, Log: &MemoryAuditLog{}}
-	form := url.Values{"reason": {"spam"}, "tenant": {"t1"}}
+	form := url.Values{"reason": {"spam"}}
 	req := httptest.NewRequest("POST", "/moderation/takedown", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withTenant(req, "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -60,9 +68,10 @@ func TestTakedownMissingResource(t *testing.T) {
 func TestTakedownMissingReason(t *testing.T) {
 	fs := &storage.FS{Root: t.TempDir()}
 	h := &TakedownHandler{Backend: func(string) storage.Backend { return fs }, Log: &MemoryAuditLog{}}
-	form := url.Values{"resource": {"posts/1"}, "tenant": {"t1"}}
+	form := url.Values{"resource": {"posts/1"}}
 	req := httptest.NewRequest("POST", "/moderation/takedown", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withTenant(req, "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -74,9 +83,10 @@ func TestTakedownMissingReason(t *testing.T) {
 func TestTakedownNotFound(t *testing.T) {
 	fs := &storage.FS{Root: t.TempDir()}
 	h := &TakedownHandler{Backend: func(string) storage.Backend { return fs }, Log: &MemoryAuditLog{}}
-	form := url.Values{"resource": {"missing"}, "reason": {"spam"}, "tenant": {"t1"}}
+	form := url.Values{"resource": {"missing"}, "reason": {"spam"}}
 	req := httptest.NewRequest("POST", "/moderation/takedown", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withTenant(req, "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -93,6 +103,25 @@ func TestTakedownMethodNotAllowed(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+}
+
+// TestTakedownRequiresAdmin verifies a non-admin caller is rejected (S11).
+func TestTakedownRequiresAdmin(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	h := &TakedownHandler{
+		Backend:         func(string) storage.Backend { return fs },
+		Log:             &MemoryAuditLog{},
+		AdminAuthorizer: func(*http.Request) bool { return false },
+	}
+	form := url.Values{"resource": {"posts/1"}, "reason": {"spam"}}
+	req := httptest.NewRequest("POST", "/moderation/takedown", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withTenant(req, "t1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin = %d, want 403", rec.Code)
 	}
 }
 
@@ -124,8 +153,7 @@ func TestToSGate(t *testing.T) {
 	h := gate.Middleware(next)
 
 	// Unaccepted tenant -> 403.
-	req := httptest.NewRequest("GET", "/data", http.NoBody)
-	req.URL.RawQuery = "tenant=t1"
+	req := withTenant(httptest.NewRequest("GET", "/data", http.NoBody), "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -136,8 +164,7 @@ func TestToSGate(t *testing.T) {
 	if err := store.Accept(context.Background(), "t1"); err != nil {
 		t.Fatal(err)
 	}
-	req2 := httptest.NewRequest("GET", "/data", http.NoBody)
-	req2.URL.RawQuery = "tenant=t1"
+	req2 := withTenant(httptest.NewRequest("GET", "/data", http.NoBody), "t1")
 	rec2 := httptest.NewRecorder()
 	h.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
@@ -154,8 +181,7 @@ func TestToSGateAllowsAcceptEndpoint(t *testing.T) {
 	})
 	h := gate.Middleware(next)
 
-	req := httptest.NewRequest("POST", "/admin/tos", http.NoBody)
-	req.URL.RawQuery = "tenant=t1"
+	req := withTenant(httptest.NewRequest("POST", "/admin/tos", http.NoBody), "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -167,9 +193,7 @@ func TestToSGateAllowsAcceptEndpoint(t *testing.T) {
 func TestAcceptHandler(t *testing.T) {
 	store := NewMemoryToSStore()
 	h := &AcceptHandler{Store: store}
-	form := url.Values{"tenant": {"t1"}}
-	req := httptest.NewRequest("POST", "/admin/tos", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := withTenant(httptest.NewRequest("POST", "/admin/tos", http.NoBody), "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -181,7 +205,7 @@ func TestAcceptHandler(t *testing.T) {
 	}
 }
 
-// TestAcceptHandlerMissingTenant verifies a missing tenant is a 400.
+// TestAcceptHandlerMissingTenant verifies a missing tenant context is a 400.
 func TestAcceptHandlerMissingTenant(t *testing.T) {
 	h := &AcceptHandler{Store: NewMemoryToSStore()}
 	req := httptest.NewRequest("POST", "/admin/tos", http.NoBody)
@@ -209,9 +233,10 @@ func TestTakedownAuditError(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &TakedownHandler{Backend: func(string) storage.Backend { return fs }, Log: failingAuditLog{}}
-	form := url.Values{"resource": {"posts/1"}, "reason": {"spam"}, "tenant": {"t1"}}
+	form := url.Values{"resource": {"posts/1"}, "reason": {"spam"}}
 	req := httptest.NewRequest("POST", "/moderation/takedown", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = withTenant(req, "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -232,8 +257,7 @@ func TestToSGateStoreError(t *testing.T) {
 	gate := &ToSGate{Store: failingToSStore{}}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	h := gate.Middleware(next)
-	req := httptest.NewRequest("GET", "/data", http.NoBody)
-	req.URL.RawQuery = "tenant=t1"
+	req := withTenant(httptest.NewRequest("GET", "/data", http.NoBody), "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -255,9 +279,7 @@ func TestAcceptHandlerMethodNotAllowed(t *testing.T) {
 // TestAcceptHandlerStoreError verifies a store error returns 500.
 func TestAcceptHandlerStoreError(t *testing.T) {
 	h := &AcceptHandler{Store: failingToSStore{}}
-	form := url.Values{"tenant": {"t1"}}
-	req := httptest.NewRequest("POST", "/admin/tos", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := withTenant(httptest.NewRequest("POST", "/admin/tos", http.NoBody), "t1")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {

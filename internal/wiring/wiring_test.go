@@ -9,6 +9,7 @@ import (
 	"github.com/hypernext/identity/internal/authstore"
 	"github.com/hypernext/identity/internal/protocols/solid"
 	"github.com/hypernext/identity/internal/store"
+	"github.com/hypernext/identity/internal/tenant"
 )
 
 // newTestStores opens temp SQLite + auth stores.
@@ -98,9 +99,46 @@ func TestACLChecker(t *testing.T) {
 	if a.CanWrite(ctx, "docs/x", solid.PublicAgent) {
 		t.Fatal("public agent should not write")
 	}
-	// Authenticated agent can write.
+	// Without a tenant context, no authenticated agent can write (ownership
+	// cannot be established).
+	if a.CanWrite(ctx, "docs/x", solid.Agent{WebID: "https://alice.example.com/profile/card#me"}) {
+		t.Fatal("agent without tenant context should not write")
+	}
+}
+
+// TestACLCheckerOwnership verifies write access requires the agent's WebID to
+// resolve to an account in the resource's tenant (S2). A foreign WebID must
+// not be able to write.
+func TestACLCheckerOwnership(t *testing.T) {
+	st, _ := newTestStores(t)
+	ctx := context.Background()
+
+	// Seed a tenant and an account owned by alice.
+	if err := st.CreateTenant(ctx, &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateAccount(ctx, &store.Account{
+		ID: "a1", TenantID: "t1", DID: "did:web:alice.example.com",
+		WebID: "https://alice.example.com/profile/card#me",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A request context carrying tenant t1.
+	ctx = tenant.WithTenant(ctx, &tenant.Tenant{ID: "t1", Handle: "alice.example.com"})
+	a := &ACLChecker{Store: st}
+
+	// Alice (owner) can write.
 	if !a.CanWrite(ctx, "docs/x", solid.Agent{WebID: "https://alice.example.com/profile/card#me"}) {
-		t.Fatal("authenticated agent should write")
+		t.Fatal("owner should write")
+	}
+	// A foreign WebID (not in tenant t1) cannot write.
+	if a.CanWrite(ctx, "docs/x", solid.Agent{WebID: "https://bob.example.com/profile/card#me"}) {
+		t.Fatal("foreign WebID should not write")
+	}
+	// An unknown WebID cannot write.
+	if a.CanWrite(ctx, "docs/x", solid.Agent{WebID: "https://unknown.example.com/profile#me"}) {
+		t.Fatal("unknown WebID should not write")
 	}
 }
 

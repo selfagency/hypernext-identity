@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hypernext/identity/internal/storage"
+	"github.com/hypernext/identity/internal/tenant"
 )
 
 // AuditEntry records a moderation action.
@@ -60,13 +61,21 @@ type TakedownHandler struct {
 	Backend func(tenantID string) storage.Backend
 	// Log records audit entries.
 	Log AuditLog
+	// AdminAuthorizer reports whether the request principal is an admin.
+	AdminAuthorizer func(r *http.Request) bool
 }
 
 // ServeHTTP handles takedown requests: POST /moderation/takedown with
-// {resource, reason}.
+// {resource, reason}. The tenant is derived from the authenticated request
+// context (set by the tenant middleware), never from form input, and the
+// caller must be an admin.
 func (h *TakedownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.AdminAuthorizer != nil && !h.AdminAuthorizer(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -84,13 +93,14 @@ func (h *TakedownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Takedown: delete the resource from the tenant's backend.
-	tenantID := r.FormValue("tenant")
-	if tenantID == "" {
-		http.Error(w, "tenant is required", http.StatusBadRequest)
+	// Takedown: delete the resource from the tenant's backend. The tenant is
+	// taken from the request context, not the form (S11).
+	t, ok := tenant.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "tenant context required", http.StatusBadRequest)
 		return
 	}
-	backend := h.Backend(tenantID)
+	backend := h.Backend(t.ID)
 	if err := backend.Delete(r.Context(), resource); err != nil {
 		http.Error(w, "resource not found", http.StatusNotFound)
 		return

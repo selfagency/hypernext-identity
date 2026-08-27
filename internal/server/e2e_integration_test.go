@@ -28,12 +28,21 @@ func mintAccessToken(t *testing.T, ts *testServer, subject string, scopes []stri
 func TestE2ECrossProtocolFlow(t *testing.T) {
 	ts := startTestServer(t, &Config{}, true)
 
-	// Mint a signed access token with remoteStorage rw scope. This is the
-	// token the wiring TokenValidator validates (it verifies the JWT
-	// signature + expiry). In production this token is minted by the OIDC
+	// Seed an account owned by alice in tenant t1 so Solid's ownership check
+	// (WebID -> account -> tenant) passes.
+	if err := ts.srv.store.CreateAccount(context.Background(), &store.Account{
+		ID: "a1", TenantID: "t1", DID: "did:web:alice.example.com",
+		WebID: "https://alice.example.com/profile/card#me",
+	}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	// Mint a signed access token with remoteStorage rw scope. The subject is
+	// the account's WebID so Solid's ownership check (WebID -> account ->
+	// tenant) resolves. In production this token is minted by the OIDC
 	// provider; here we mint it directly to exercise the authorization path
 	// end-to-end.
-	token := mintAccessToken(t, ts, "alice", []string{"rw"})
+	token := mintAccessToken(t, ts, "https://alice.example.com/profile/card#me", []string{"rw"})
 
 	// 1. remoteStorage PUT (requires rw scope).
 	code, _ := ts.do(t, http.MethodPut, "/rs/docs/hello.txt", "alice.example.com", token, "text/plain", []byte("hello world"))

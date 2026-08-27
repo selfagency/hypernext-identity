@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+
+	"github.com/hypernext/identity/internal/tenant"
 )
 
 // ToSStore persists whether a tenant has accepted the Terms of Service.
@@ -48,13 +50,13 @@ func (g *ToSGate) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		tenantID := r.FormValue("tenant")
-		if tenantID == "" {
+		t, ok := tenant.FromContext(r.Context())
+		if !ok {
 			// No tenant context; allow (the tenant middleware handles it).
 			next.ServeHTTP(w, r)
 			return
 		}
-		accepted, err := g.Store.Accepted(r.Context(), tenantID)
+		accepted, err := g.Store.Accepted(r.Context(), t.ID)
 		if err != nil {
 			http.Error(w, "tos store error", http.StatusInternalServerError)
 			return
@@ -72,7 +74,7 @@ type AcceptHandler struct {
 	Store ToSStore
 }
 
-// ServeHTTP records ToS acceptance for a tenant.
+// ServeHTTP records ToS acceptance for the tenant in the request context.
 func (h *AcceptHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -82,12 +84,12 @@ func (h *AcceptHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	tenantID := r.FormValue("tenant")
-	if tenantID == "" {
-		http.Error(w, "tenant is required", http.StatusBadRequest)
+	t, ok := tenant.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "tenant context required", http.StatusBadRequest)
 		return
 	}
-	if err := h.Store.Accept(r.Context(), tenantID); err != nil {
+	if err := h.Store.Accept(r.Context(), t.ID); err != nil {
 		http.Error(w, "tos store error", http.StatusInternalServerError)
 		return
 	}
