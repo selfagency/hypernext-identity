@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -228,16 +230,46 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// Run starts the HTTP server with graceful shutdown.
-func (s *Server) Run(addr string) error {
+// Run starts the HTTP server on addr with graceful shutdown. It blocks until
+// the server exits or ctx is cancelled (SIGINT/SIGTERM), then shuts down.
+func (s *Server) Run(ctx context.Context, addr string) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	return s.Serve(ctx, ln)
+}
+
+// Serve serves on an existing listener with graceful shutdown. It blocks
+// until the server exits or ctx is cancelled, then shuts down cleanly.
+func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	srv := &http.Server{
-		Addr:         addr,
 		Handler:      s,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
-	s.logger.Info("server listening", "addr", addr)
-	return srv.ListenAndServe()
+	s.logger.Info("server listening", "addr", ln.Addr().String())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(ln)
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	case <-ctx.Done():
+		// Graceful shutdown with a timeout.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown: %w", err)
+		}
+	}
+	return nil
 }
 
 // newLogger builds a slog logger from config.
