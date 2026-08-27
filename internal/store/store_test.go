@@ -137,6 +137,26 @@ func TestProfileLinks(t *testing.T) {
 	}
 }
 
+// TestDeleteProfileLink verifies deleting a single link.
+func TestDeleteProfileLink(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertProfilePage(ctx, &ProfilePage{ID: "p1", TenantID: "t1", AccountID: "a1", UpdatedAt: time.Now()})
+	_ = s.AddProfileLink(ctx, &ProfileLink{ID: "l1", ProfilePageID: "p1", Position: 0, Kind: "custom", Label: "Site", URL: "https://example.com", CreatedAt: time.Now()})
+
+	if err := s.DeleteProfileLink(ctx, "p1", "l1"); err != nil {
+		t.Fatalf("DeleteProfileLink: %v", err)
+	}
+	links, _ := s.ListProfileLinks(ctx, "p1")
+	if len(links) != 0 {
+		t.Fatalf("after delete = %d links", len(links))
+	}
+	// Missing link -> ErrNotFound.
+	if err := s.DeleteProfileLink(ctx, "p1", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing = %v, want ErrNotFound", err)
+	}
+}
+
 // TestProofClaimCRUD verifies claim create/list/update/delete.
 func TestProofClaimCRUD(t *testing.T) {
 	s := newTestStore(t)
@@ -173,5 +193,53 @@ func TestProofClaimCRUD(t *testing.T) {
 	claims, _ := s.ListProofClaims(ctx, "t1")
 	if len(claims) != 0 {
 		t.Fatalf("after delete = %d claims", len(claims))
+	}
+}
+
+// TestProofClaimListEmpty verifies listing with no claims returns empty.
+func TestProofClaimListEmpty(t *testing.T) {
+	s := newTestStore(t)
+	claims, err := s.ListProofClaims(context.Background(), "t1")
+	if err != nil || len(claims) != 0 {
+		t.Fatalf("ListProofClaims = %d, %v, want empty", len(claims), err)
+	}
+}
+
+// TestProofClaimUpdateMissing verifies updating a missing claim errors.
+func TestProofClaimUpdateMissing(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.UpdateProofClaimStatus(context.Background(), "t1", "missing", "verified", ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing update = %v, want ErrNotFound", err)
+	}
+}
+
+// TestProofClaimDeleteMissing verifies deleting a missing claim errors.
+func TestProofClaimDeleteMissing(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DeleteProofClaim(context.Background(), "t1", "a1", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestRevokeMissingKey verifies revoking a missing key errors.
+func TestRevokeMissingKey(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RevokePublicKey(context.Background(), "t1", "a1", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing revoke = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeleteMissingKey verifies deleting a missing key errors.
+func TestDeleteMissingKey(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DeletePublicKey(context.Background(), "t1", "a1", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestOpenInvalidPath verifies opening an invalid path errors.
+func TestOpenInvalidPath(t *testing.T) {
+	if _, err := Open("/nonexistent-dir/test.db"); err == nil {
+		t.Fatal("expected error for invalid path")
 	}
 }
