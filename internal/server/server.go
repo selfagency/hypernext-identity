@@ -125,8 +125,9 @@ func (s *Server) buildRouter() {
 
 	// remoteStorage.
 	rs := &remotestorage.Server{
-		Backend: backendFor,
-		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKey()},
+		Backend:        backendFor,
+		Tokens:         &wiring.TokenValidator{Key: s.authStore.SigningKey()},
+		AllowedOrigins: s.cfg.Storage.AllowedOrigins,
 	}
 	mux.Handle("/rs/", rs)
 

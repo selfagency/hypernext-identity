@@ -51,20 +51,23 @@ func (f fakeTenantStore) FindByHost(_ context.Context, host string) (*tenant.Ten
 	return t, nil
 }
 
-// TestCORSPreflight verifies OPTIONS returns CORS headers.
+// TestCORSPreflight verifies OPTIONS returns CORS headers for an allowlisted
+// origin (no wildcard).
 func TestCORSPreflight(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
+	srv.AllowedOrigins = []string{"https://app.example.com"}
 	h := withTenant(srv, "alice.example.com")
 	req := httptest.NewRequest("OPTIONS", "/docs/", http.NoBody)
 	req.Host = "alice.example.com"
+	req.Header.Set("Origin", "https://app.example.com")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if ao := rec.Header().Get("Access-Control-Allow-Origin"); ao != "*" {
-		t.Fatalf("allow-origin = %q, want *", ao)
+	if ao := rec.Header().Get("Access-Control-Allow-Origin"); ao != "https://app.example.com" {
+		t.Fatalf("allow-origin = %q, want https://app.example.com", ao)
 	}
 }
 
@@ -229,6 +232,121 @@ func TestDeleteMissing(t *testing.T) {
 func TestErrNoToken(t *testing.T) {
 	if errNoToken.Error() != "no bearer token" {
 		t.Fatalf("errNoToken = %q, want 'no bearer token'", errNoToken.Error())
+	}
+}
+
+// TestGETEmitsETag verifies GET returns an ETag for the resource (S15).
+func TestGETEmitsETag(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+
+	putReq := httptest.NewRequest("PUT", "/docs/x", strings.NewReader("hello"))
+	putReq.Host = "alice.example.com"
+	putReq.Header.Set("Authorization", "Bearer tok")
+	putRec := httptest.NewRecorder()
+	h.ServeHTTP(putRec, putReq)
+
+	getReq := httptest.NewRequest("GET", "/docs/x", http.NoBody)
+	getReq.Host = "alice.example.com"
+	getReq.Header.Set("Authorization", "Bearer tok")
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200", getRec.Code)
+	}
+	if et := getRec.Header().Get("ETag"); et == "" {
+		t.Fatal("GET missing ETag")
+	}
+}
+
+// TestIfNoneMatch verifies If-None-Match returns 304 when the ETag matches
+// (S15 conditional requests).
+func TestIfNoneMatch(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+
+	putReq := httptest.NewRequest("PUT", "/docs/x", strings.NewReader("hello"))
+	putReq.Host = "alice.example.com"
+	putReq.Header.Set("Authorization", "Bearer tok")
+	putRec := httptest.NewRecorder()
+	h.ServeHTTP(putRec, putReq)
+	etag := putRec.Header().Get("ETag")
+
+	getReq := httptest.NewRequest("GET", "/docs/x", http.NoBody)
+	getReq.Host = "alice.example.com"
+	getReq.Header.Set("Authorization", "Bearer tok")
+	getReq.Header.Set("If-None-Match", etag)
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusNotModified {
+		t.Fatalf("If-None-Match hit = %d, want 304", getRec.Code)
+	}
+}
+
+// TestIfMatch verifies If-Match returns 412 when the ETag does not match
+// (S15 conditional requests).
+func TestIfMatch(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+
+	putReq := httptest.NewRequest("PUT", "/docs/x", strings.NewReader("hello"))
+	putReq.Host = "alice.example.com"
+	putReq.Header.Set("Authorization", "Bearer tok")
+	putRec := httptest.NewRecorder()
+	h.ServeHTTP(putRec, putReq)
+
+	// If-Match with a wrong ETag -> 412.
+	putReq2 := httptest.NewRequest("PUT", "/docs/x", strings.NewReader("new"))
+	putReq2.Host = "alice.example.com"
+	putReq2.Header.Set("Authorization", "Bearer tok")
+	putReq2.Header.Set("If-Match", `"wrong-etag"`)
+	putRec2 := httptest.NewRecorder()
+	h.ServeHTTP(putRec2, putReq2)
+	if putRec2.Code != http.StatusPreconditionFailed {
+		t.Fatalf("If-Match mismatch = %d, want 412", putRec2.Code)
+	}
+}
+
+// TestBearerCaseInsensitive verifies the Bearer scheme is case-insensitive
+// (S15).
+func TestBearerCaseInsensitive(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+	req := httptest.NewRequest("GET", "/docs/x", http.NoBody)
+	req.Host = "alice.example.com"
+	req.Header.Set("Authorization", "bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	// Missing resource -> 404 (auth passed, scope ok).
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("lowercase bearer = %d, want 404 (auth passed)", rec.Code)
+	}
+}
+
+// TestCORSAllowlist verifies CORS reflects only configured origins, not a
+// wildcard (S15).
+func TestCORSAllowlist(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	srv.AllowedOrigins = []string{"https://app.example.com"}
+	h := withTenant(srv, "alice.example.com")
+
+	req := httptest.NewRequest("OPTIONS", "/docs/", http.NoBody)
+	req.Host = "alice.example.com"
+	req.Header.Set("Origin", "https://app.example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if ao := rec.Header().Get("Access-Control-Allow-Origin"); ao != "https://app.example.com" {
+		t.Fatalf("allow-origin = %q, want https://app.example.com", ao)
+	}
+
+	// Disallowed origin -> no CORS header.
+	req2 := httptest.NewRequest("OPTIONS", "/docs/", http.NoBody)
+	req2.Host = "alice.example.com"
+	req2.Header.Set("Origin", "https://evil.example.com")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if ao := rec2.Header().Get("Access-Control-Allow-Origin"); ao != "" {
+		t.Fatalf("disallowed origin allow-origin = %q, want empty", ao)
 	}
 }
 
