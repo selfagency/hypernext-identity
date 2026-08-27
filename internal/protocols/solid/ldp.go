@@ -32,7 +32,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	agent := s.agentFromRequest(r)
 	backend := s.Backend(t.ID)
-	key := r.URL.Path
+	// r.URL.Path starts with "/"; the storage key is the path without the
+	// leading slash (the Prefixed backend rejects absolute keys).
+	key := strings.TrimPrefix(r.URL.Path, "/")
 
 	switch r.Method {
 	case http.MethodGet:
