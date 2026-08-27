@@ -243,3 +243,49 @@ func TestOpenInvalidPath(t *testing.T) {
 		t.Fatal("expected error for invalid path")
 	}
 }
+
+// TestTenantCRUD verifies tenant create/get/list/delete.
+func TestTenantCRUD(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	_ = s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+
+	// Duplicate handle rejected.
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t2", Handle: "alice.example.com"}); !errors.Is(err, ErrDuplicateTenant) {
+		t.Fatalf("duplicate = %v, want ErrDuplicateTenant", err)
+	}
+
+	// Get by handle.
+	got, err := s.GetTenantByHandle(ctx, "alice.example.com")
+	if err != nil || got.ID != "t1" {
+		t.Fatalf("GetTenantByHandle = %+v, %v", got, err)
+	}
+
+	// Missing -> ErrNotFound.
+	if _, err := s.GetTenantByHandle(ctx, "missing.example.com"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing = %v, want ErrNotFound", err)
+	}
+
+	// List.
+	tenants, err := s.ListTenants(ctx)
+	if err != nil || len(tenants) != 1 {
+		t.Fatalf("ListTenants = %d, %v", len(tenants), err)
+	}
+
+	// Delete.
+	if err := s.DeleteTenant(ctx, "alice.example.com"); err != nil {
+		t.Fatalf("DeleteTenant: %v", err)
+	}
+	if _, err := s.GetTenantByHandle(ctx, "alice.example.com"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeleteTenantMissing verifies deleting a missing tenant errors.
+func TestDeleteTenantMissing(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DeleteTenant(context.Background(), "missing.example.com"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing delete = %v, want ErrNotFound", err)
+	}
+}

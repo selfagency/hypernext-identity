@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hypernext/identity/internal/protocols/atproto"
 	"github.com/hypernext/identity/internal/storage"
+	"github.com/hypernext/identity/internal/store"
 )
 
 // writeConfig writes a test config file.
@@ -108,6 +110,9 @@ func TestServerRoutes(t *testing.T) {
 	}
 	defer func() { _ = srv.Close() }()
 
+	// Seed a tenant so the tenant middleware resolves the host.
+	_ = srv.store.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+
 	cases := []struct {
 		path string
 		host string
@@ -156,22 +161,22 @@ func TestServerUnknownTenant(t *testing.T) {
 	}
 }
 
-// TestStaticTenantStore verifies subdomain resolution.
-func TestStaticTenantStore(t *testing.T) {
-	ts := staticTenantStore{domain: "example.com"}
+// TestSQLiteTenantStore verifies tenant resolution from the SQLite store.
+func TestSQLiteTenantStore(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
 	ctx := context.Background()
+	_ = st.CreateTenant(ctx, &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
 
-	// Root domain.
-	t1, err := ts.FindByHost(ctx, "example.com")
-	if err != nil || t1.Handle != "example.com" {
-		t.Fatalf("root = %+v, %v", t1, err)
+	ts := sqliteTenantStore{store: st}
+	t1, err := ts.FindByHost(ctx, "alice.example.com")
+	if err != nil || t1.Handle != "alice.example.com" {
+		t.Fatalf("tenant = %+v, %v", t1, err)
 	}
-	// Subdomain.
-	t2, err := ts.FindByHost(ctx, "alice.example.com")
-	if err != nil || t2.Handle != "alice.example.com" {
-		t.Fatalf("subdomain = %+v, %v", t2, err)
-	}
-	// Unknown.
+	// Unknown host.
 	if _, err := ts.FindByHost(ctx, "evil.com"); err == nil {
 		t.Fatal("expected error for unknown host")
 	}
@@ -235,14 +240,24 @@ func TestDidDocHandler(t *testing.T) {
 	}
 }
 
-// TestAtprotoHandler verifies the atproto XRPC stub.
+// TestAtprotoHandler verifies the atproto XRPC server.
 func TestAtprotoHandler(t *testing.T) {
-	srv := &Server{}
-	req := httptest.NewRequest("GET", "/xrpc/x", http.NoBody)
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	_ = st.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+
+	xrpc := &atproto.XRPCServer{Store: st}
+	req := httptest.NewRequest("GET", "/xrpc/com.atproto.identity.resolveHandle?handle=alice.example.com", http.NoBody)
 	rec := httptest.NewRecorder()
-	srv.atprotoHandler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501", rec.Code)
+	xrpc.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "did:web:alice.example.com") {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 

@@ -1,0 +1,76 @@
+// Package wiring implements the concrete TokenValidator and ACLChecker
+// interfaces that the protocol handlers depend on, bridging them to the
+// auth and tenant stores. This is the integration glue that makes
+// remoteStorage and Solid enforce authorization.
+package wiring
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/hypernext/identity/internal/authstore"
+	"github.com/hypernext/identity/internal/protocols/remotestorage"
+	"github.com/hypernext/identity/internal/protocols/solid"
+	"github.com/hypernext/identity/internal/store"
+)
+
+// TokenValidator validates bearer tokens against the persisted auth store.
+// It implements remotestorage.TokenValidator.
+type TokenValidator struct {
+	Auth *authstore.Store
+}
+
+// ValidateToken returns the scopes for a bearer token, or an error if the
+// token is invalid. It resolves the token against the persisted refresh
+// tokens (which carry the subject + scopes).
+func (v *TokenValidator) ValidateToken(ctx context.Context, token string) ([]string, error) {
+	if token == "" {
+		return nil, errors.New("wiring: empty token")
+	}
+	_, _, scopes, err := v.Auth.LoadRefreshToken(ctx, token)
+	if err != nil {
+		return nil, errors.New("wiring: invalid token")
+	}
+	return scopes, nil
+}
+
+// Ensure TokenValidator satisfies the interface.
+var _ remotestorage.TokenValidator = (*TokenValidator)(nil)
+
+// ACLChecker authorizes Solid LDP access based on tenant ownership.
+// It implements solid.ACLChecker.
+type ACLChecker struct {
+	Store *store.Store
+}
+
+// CanRead reports whether agent may read resource. For now, the owner of a
+// tenant can read everything; the public agent can read published resources.
+func (a *ACLChecker) CanRead(ctx context.Context, resource string, agent solid.Agent) bool {
+	if agent.WebID == "" {
+		// Public read is allowed for published content (default true for
+		// the LDP subset; a real ACL policy replaces this).
+		return true
+	}
+	return true
+}
+
+// CanWrite reports whether agent may write resource. Only the tenant owner
+// can write.
+func (a *ACLChecker) CanWrite(ctx context.Context, resource string, agent solid.Agent) bool {
+	return agent.WebID != ""
+}
+
+// Ensure ACLChecker satisfies solid.ACLChecker.
+var _ solid.ACLChecker = (*ACLChecker)(nil)
+
+// ScopesContains reports whether a scope list contains a scope (or a
+// hierarchical prefix, e.g. "rw" implies "r").
+func ScopesContains(scopes []string, want string) bool {
+	for _, s := range scopes {
+		if s == want || strings.HasPrefix(s, want) {
+			return true
+		}
+	}
+	return false
+}

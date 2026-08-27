@@ -118,6 +118,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			auth_time  TIMESTAMP NOT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS tenants (
+			id         TEXT PRIMARY KEY,
+			handle     TEXT NOT NULL UNIQUE,
+			did_method TEXT NOT NULL DEFAULT 'web',
+			did        TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
