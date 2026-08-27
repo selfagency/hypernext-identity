@@ -106,6 +106,11 @@ func mockS3Server(t *testing.T) *httptest.Server {
 			w.Header().Set("Last-Modified", "Mon, 2 Jan 2006 15:04:05 GMT")
 			w.Write(content)
 		case http.MethodDelete:
+			if _, ok := buckets[bucket][key]; !ok {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`<?xml version="1.0"?><Error><Code>NoSuchKey</Code></Error>`))
+				return
+			}
 			delete(buckets[bucket], key)
 			w.WriteHeader(http.StatusNoContent)
 		default:

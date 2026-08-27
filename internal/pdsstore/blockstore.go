@@ -21,20 +21,25 @@ type Blockstore struct {
 	db *sql.DB
 }
 
-// Open opens (and creates if needed) a SQLite blockstore at path.
+// Open opens (and creates if needed) a SQLite blockstore at path. Pragmas
+// (WAL, busy timeout) are set via the DSN so they apply to every pooled
+// connection.
 func Open(path string) (*Blockstore, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
 	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS blocks (
 		cid  TEXT PRIMARY KEY,
 		data BLOB NOT NULL
 	)`); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return &Blockstore{db: db}, nil

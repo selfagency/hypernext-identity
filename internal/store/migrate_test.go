@@ -1,0 +1,99 @@
+package store
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+)
+
+// TestMigrationRunner verifies the versioned migration runner applies all
+// migrations in order and records them in schema_version.
+func TestMigrationRunner(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// All migrations applied.
+	v, err := s.currentVersion(ctx)
+	if err != nil {
+		t.Fatalf("currentVersion: %v", err)
+	}
+	if v != len(migrations) {
+		t.Fatalf("schema version = %d, want %d", v, len(migrations))
+	}
+
+	// schema_version rows exist for each migration.
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_version`).Scan(&count); err != nil {
+		t.Fatalf("count schema_version: %v", err)
+	}
+	if count != len(migrations) {
+		t.Fatalf("schema_version rows = %d, want %d", count, len(migrations))
+	}
+}
+
+// TestMigrationIdempotent verifies reopening an existing DB does not re-run
+// migrations or lose data.
+func TestMigrationIdempotent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "test.db")
+
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open 1: %v", err)
+	}
+	if err := s1.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	_ = s1.Close()
+
+	// Reopen: migrations must not re-run, data preserved.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open 2: %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	got, err := s2.GetTenantByHandle(ctx, "alice.example.com")
+	if err != nil || got.ID != "t1" {
+		t.Fatalf("tenant after reopen = %+v, %v", got, err)
+	}
+}
+
+// TestAccountsTable verifies the accounts table exists and enforces the
+// tenant FK (C2). Inserting an account with a dangling tenant_id must fail.
+func TestAccountsTable(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Insert a tenant, then an account referencing it.
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO accounts (id, tenant_id, did, webid) VALUES (?, ?, ?, ?)`,
+		"a1", "t1", "did:web:alice.example.com", "https://alice.example.com/profile#me"); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+
+	// Dangling tenant_id must be rejected by the FK.
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO accounts (id, tenant_id, did) VALUES (?, ?, ?)`,
+		"a2", "no-such-tenant", "did:web:x"); err == nil {
+		t.Fatal("expected FK violation for dangling tenant_id")
+	}
+}
+
+// TestForeignKeysEnforcedAcrossPool verifies PRAGMA foreign_keys is applied
+// via the DSN so it holds on every pooled connection (C3).
+func TestForeignKeysEnforcedAcrossPool(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// profile_links.profile_page_id references profile_pages(id). Inserting a
+	// link with a dangling page id must fail if foreign_keys is on.
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO profile_links (id, profile_page_id, position, kind, label, url) VALUES (?, ?, ?, ?, ?, ?)`,
+		"l1", "no-such-page", 0, "link", "x", "https://x"); err == nil {
+		t.Fatal("expected FK violation for dangling profile_page_id")
+	}
+}
