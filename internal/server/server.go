@@ -197,11 +197,13 @@ func (s *Server) buildRouter() {
 	proofs := &endpoints.ProofsHandler{Store: s.store}
 	mux.Handle("/.well-known/proofs", proofs)
 
-	// IPFS pinning (broker) — the pinner is a client injected into backup/
-	// export flows, not a standalone HTTP endpoint.
+	// IPFS pinning broker — a client injected into backup/export flows and
+	// exposed as an admin-guarded HTTP surface.
+	var ipfsBackend ipfspin.Backend
 	if s.cfg.IPFS.Enabled {
-		_ = ipfspin.NewKuboRPC("http://127.0.0.1:5001")
+		ipfsBackend = ipfspin.NewKuboRPC("http://127.0.0.1:5001")
 	}
+	ipfsBroker := newIPFSBroker(s.store, ipfsBackend)
 
 	// atproto PDS.
 	xrpc := &atproto.XRPCServer{Store: s.store}
@@ -269,6 +271,9 @@ func (s *Server) buildRouter() {
 		// Admin routes on the identity host, behind the admin guard.
 		identity.Handle("/admin/backup", adminGuard.Middleware(backupHandler))
 		identity.Handle("/admin/moderation/takedown", adminGuard.Middleware(takedown))
+		// IPFS pinning broker, behind the admin guard.
+		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
+		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))
 		root = hostRouter{
 			identityHost: identityHost,
 			identity:     identity,

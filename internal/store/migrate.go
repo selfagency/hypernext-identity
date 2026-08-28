@@ -235,6 +235,11 @@ func migrateV3(ctx context.Context, tx *sql.Tx) error {
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS ipfs_pins (
+			cid        TEXT PRIMARY KEY,
+			status     TEXT NOT NULL DEFAULT 'pinned',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
