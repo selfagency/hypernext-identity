@@ -1,0 +1,22 @@
+# rumdl configuration for Sovereign documentation.
+# Docs are GitHub-first Markdown rendered by Hugo with YAML front matter.
+
+[global]
+# Only lint our own content — never the vendored theme or build output.
+exclude = [
+  "docs/site/**",
+  "docs/public/**",
+]
+
+# Disabled rules:
+#   MD025 — Hugo pages carry a front-matter `title:` AND a body H1; the
+#           "single H1" rule false-positives on that documented pattern.
+#   MD013 — line length; reference tables and URLs legitimately exceed 80
+#           chars and we do not hard-wrap tables.
+#   MD033 — inline HTML is allowed (Hugo shortcodes / GitHub-friendly embeds).
+#   MD041 — first line need not be a heading (front matter precedes it).
+disable = ["MD025", "MD013", "MD033", "MD041"]
+
+[MD049]
+# Emphasis style: underscore is the repo convention for italics in prose.
+style = "underscore"

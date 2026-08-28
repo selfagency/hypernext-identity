@@ -1,0 +1,89 @@
+# Hugo site configuration for the Sovereign documentation site.
+#
+# This directory (docs/site) is the Hugo project root. The actual
+# documentation Markdown lives in the parent directory (docs/) so that it
+# renders cleanly on GitHub. The `module.mounts` block below mounts docs/
+# as the Hugo `content/` root, so the SAME files render both on GitHub and
+# through Hugo. There is no duplicated content.
+#
+# Build (from docs/site):   hugo --minify
+# Serve locally:            hugo server -D
+
+baseURL: "https://selfagency.github.io/sovereign/"
+title: "Sovereign"
+# Vendored prebuilt theme (docs/site/themes/hugo-geekdoc), NOT a Hugo module:
+# the module form ships un-compiled sources and needs webpack/npm to build the
+# CSS/JS. The release tarball has the compiled assets, so no Node is required.
+theme: "hugo-geekdoc"
+
+# Build output goes OUTSIDE the docs/ content tree so Hugo never tries to
+# ingest its own generated HTML on rebuilds (docs/site/public is inside the
+# mounted content source).
+publishDir: "../public"
+
+# Keep paths case-sensitive and stable so deep links match GitHub paths.
+disablePathToLower: true
+pluralizeListTitles: false
+
+enableRobotsTXT: true
+
+# Syntax highlighting via classes (no client-side JS dependency).
+pygmentsUseClasses: true
+pygmentsCodeFences: true
+
+markup:
+  goldmark:
+    renderer:
+      # Required so geekdoc shortcodes and raw HTML in Markdown render.
+      unsafe: true
+  tableOfContents:
+    startLevel: 2
+    endLevel: 3
+
+taxonomies:
+  tag: tags
+
+outputs:
+  home: [HTML]
+  page: [HTML]
+  section: [HTML]
+  taxonomy: [HTML]
+  term: [HTML]
+
+# ---------------------------------------------------------------------------
+# Content mounts: use docs/ (the parent of this file's directory) as content.
+# Paths in mounts are relative to THIS config directory (docs/site).
+# ---------------------------------------------------------------------------
+module:
+  mounts:
+    - source: "../"
+      target: "content"
+      # Keep the Hugo project itself, templates, and build output out of
+      # content. Negation prefix is "! " (bang + space). Positives first.
+      # Exclude the Hugo project itself, templates, and build output from
+      # content. Only negations: when `files` contains no positive pattern,
+      # everything else is included by default. ("! " = bang + space.)
+      files:
+        - "! site/**"
+        - "! public/**"
+        - "! _templates/**"
+        - "! **/.DS_Store"
+    # The vendored theme supplies its own assets/static. No module imports.
+
+params:
+  description: >
+    Sovereign is a self-hosted, multi-tenant identity and personal-data
+    server distributed as a single Go binary with SQLite and no required
+    external services.
+
+  # Geekdoc theme options.
+  geekdocToC: 3
+  geekdocSearch: true
+  geekdocSearchShowParent: true
+  geekdocSearchShowDescription: true
+  geekdocNextPrev: true
+  geekdocBreadcrumb: true
+  geekdocRepo: "https://github.com/selfagency/sovereign"
+  geekdocEditPath: "edit/main/docs"
+  geekdocImageLazyLoading: true
+  geekdocDarkModeDim: true

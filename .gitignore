@@ -26,3 +26,8 @@ config.yml
 
 # Scratch / session state
 .tmp/
+
+# Documentation build output (Hugo)
+/docs/public/
+/docs/site/.hugo_build.lock
+/docs/site/resources/
