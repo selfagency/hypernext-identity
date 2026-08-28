@@ -277,3 +277,83 @@ func TestAuditLog(t *testing.T) {
 		t.Fatalf("first = %s, want a2 (newest first)", entries[0].ID)
 	}
 }
+
+// TestUserOnboardingState verifies email, ToS, and passkey-setup flags.
+func TestUserOnboardingState(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice", Email: "a@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Email round-trips through UserByID.
+	u, err := s.UserByID(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email != "a@example.com" {
+		t.Fatalf("email = %q, want a@example.com", u.Email)
+	}
+	if u.ToSAccepted || u.PasskeySetup {
+		t.Fatalf("new user should not have accepted ToS or set up passkey")
+	}
+
+	// Set email, ToS, passkey flags.
+	if err := s.SetUserEmail(ctx, "u1", "b@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetToSAccepted(ctx, "u1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPasskeySetup(ctx, "u1", true); err != nil {
+		t.Fatal(err)
+	}
+	u2, _ := s.UserByID(ctx, "u1")
+	if u2.Email != "b@example.com" || !u2.ToSAccepted || !u2.PasskeySetup {
+		t.Fatalf("updated user = %+v", u2)
+	}
+
+	// Unknown user -> ErrNotFound.
+	if err := s.SetUserEmail(ctx, "nope", "x@example.com"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown email = %v, want ErrNotFound", err)
+	}
+}
+
+// TestInviteTokenCRUD verifies invite token create/lookup/consume.
+func TestInviteTokenCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	it := &InviteToken{ID: "inv1", TokenHash: "abc123hash", UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := s.CreateInviteToken(ctx, it); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.InviteTokenByHash(ctx, "abc123hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserID != "u1" || !got.UsedAt.IsZero() {
+		t.Fatalf("invite = %+v", got)
+	}
+
+	if err := s.MarkInviteTokenUsed(ctx, "inv1"); err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := s.InviteTokenByHash(ctx, "abc123hash")
+	if got2.UsedAt.IsZero() {
+		t.Fatalf("invite not marked used")
+	}
+
+	if _, err := s.InviteTokenByHash(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown invite = %v, want ErrNotFound", err)
+	}
+}
