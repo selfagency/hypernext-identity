@@ -85,6 +85,7 @@ curl -H "Accept: application/activity+json" https://alice.example.com/profile/
 curl -H "Accept: application/did+json" https://alice.example.com/profile/
 ```
 
-> **Status: Partial.** The h-card and DID document are minimal (the DID doc is
-> `{"id": "did:web:<host>"}`); the actor document is served by the
-> `activitypub` package. Richer profile data is future work.
+> **Status: Shipped.** The h-card renders the tenant's display name, bio, and
+> visible links from the store; the DID document carries the tenant's real DID
+> (falling back to `did:web:<host>`) with `@context` and `alsoKnownAs`. The
+> actor document is served by the `activitypub` package.

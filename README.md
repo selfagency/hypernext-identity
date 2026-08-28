@@ -32,7 +32,7 @@ systems or cryptography expert.
 | Solid Pod (LDP + PATCH + WAC + Solid-OIDC) | **Shipped** | `/solid/` |
 | remoteStorage (core read/write + conditionals + folder listing) | **Shipped** | `/rs/` |
 | AT Protocol PDS (repo + a small set of XRPC reads) | Partial | `/xrpc/` |
-| Profile (content-negotiated h-card / actor / DID doc) | Partial | `/profile/` |
+| Profile (content-negotiated h-card / actor / DID doc) | **Shipped** | `/profile/` |
 | ActivityPub (actor document + HTTP-signature verification) | Partial | `internal/protocols/activitypub` |
 | OIDC provider | **Shipped** | identity host `id.<domain>` — discovery/authorize/token/userinfo/jwks |
 | WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register\|login/{begin,finish}` |

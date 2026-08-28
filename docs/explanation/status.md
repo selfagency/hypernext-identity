@@ -58,7 +58,7 @@ store — they do **not** resolve a per-tenant store.
 | NodeInfo | **Shipped** | route `/.well-known/nodeinfo` | Software/protocol advertisement. |
 | Public SSH/PGP key hosting (+ WKD path) | **Shipped** | routes `/keys`, `/.well-known/openpgpkey/` | Served from the store; private-key material rejected. |
 | Keyoxide-style public proofs | **Shipped** | route `/.well-known/proofs` | Public identity proofs. |
-| Profile (h-card / actor / DID doc) | Partial | route `/profile/` | Content-negotiated; document-type coverage varies. |
+| Profile (h-card / actor / DID doc) | **Shipped** | route `/profile/` | Content-negotiated; h-card and DID doc render store data (display name, bio, links, tenant DID). |
 | ActivityPub | Partial | `internal/protocols/activitypub` | Actor document + HTTP-signature verification only; **not** a federated inbox/outbox server. |
 
 ## Platform
