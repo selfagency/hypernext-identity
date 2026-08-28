@@ -320,3 +320,44 @@ func TestPatchUnsupportedMediaType(t *testing.T) {
 		t.Fatalf("PATCH text/plain = %d, want 415", rec.Code)
 	}
 }
+
+// TestHeadReturnsHeadersNoBody proves HEAD returns headers without a body.
+func TestHeadReturnsHeadersNoBody(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+	seedTTL(t, h, "docs/note.ttl", "<> a <http://example.com/Thing>.")
+
+	req := httptest.NewRequest("HEAD", "/docs/note.ttl", http.NoBody)
+	req.Host = "alice.example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HEAD = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/turtle" {
+		t.Fatalf("HEAD content-type = %q, want text/turtle", ct)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("HEAD body = %q, want empty", rec.Body.String())
+	}
+}
+
+// TestOptionsAdvertisesPatch proves OPTIONS advertises PATCH + Accept-Patch.
+func TestOptionsAdvertisesPatch(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+
+	req := httptest.NewRequest("OPTIONS", "/docs/x", http.NoBody)
+	req.Host = "alice.example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("OPTIONS = %d, want 204", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, "PATCH") {
+		t.Fatalf("OPTIONS Allow = %q, want PATCH", allow)
+	}
+	if ap := rec.Header().Get("Accept-Patch"); !strings.Contains(ap, "application/sparql-update") {
+		t.Fatalf("OPTIONS Accept-Patch = %q, want application/sparql-update", ap)
+	}
+}

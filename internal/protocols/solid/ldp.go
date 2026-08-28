@@ -39,6 +39,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleGet(w, r, backend, key, agent)
+	case http.MethodHead:
+		s.handleHead(w, r, backend, key, agent)
+	case http.MethodOptions:
+		w.Header().Set("Allow", "GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE")
+		w.Header().Set("Accept-Patch", "application/sparql-update, text/npatch")
+		w.WriteHeader(http.StatusNoContent)
 	case http.MethodPut, http.MethodPost:
 		s.handleWrite(w, r, backend, key, agent)
 	case http.MethodPatch:
@@ -104,6 +110,23 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request, backend sto
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handleHead serves the headers for a resource without a body.
+func (s *Server) handleHead(w http.ResponseWriter, r *http.Request, backend storage.Backend, key string, agent Agent) {
+	if !s.ACL.CanRead(r.Context(), key, agent) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	rc, blob, err := backend.Get(r.Context(), key)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	_ = rc.Close()
+	w.Header().Set("Content-Type", blob.ContentType)
+	w.Header().Set("Allow", "GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE")
+	w.WriteHeader(http.StatusOK)
 }
 
 // handlePatch applies an LDP patch (SPARQL-update INSERT DATA / DELETE DATA
