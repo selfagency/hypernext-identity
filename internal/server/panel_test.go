@@ -166,3 +166,38 @@ func TestPanelSaveProfile(t *testing.T) {
 		t.Fatalf("profile = %+v", page)
 	}
 }
+
+// TestPanelCompletePasskey verifies POST /panel/passkey marks passkey setup
+// complete and redirects to the profile.
+func TestPanelCompletePasskey(t *testing.T) {
+	st := newTestStore(t)
+	key := testRSAKey(t)
+	tok, u := seedPanelUser(t, st, key, true, false)
+	h := panelHandler(st, key)
+
+	req := httptest.NewRequest("POST", "/panel/passkey", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	got, _ := st.UserByID(context.Background(), u.ID)
+	if !got.PasskeySetup {
+		t.Fatal("passkey setup not recorded")
+	}
+}
+
+// TestPanelPasskeyRequiresAuth verifies POST /panel/passkey rejects a missing
+// session.
+func TestPanelPasskeyRequiresAuth(t *testing.T) {
+	st := newTestStore(t)
+	h := panelHandler(st, testRSAKey(t))
+	req := httptest.NewRequest("POST", "/panel/passkey", http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}

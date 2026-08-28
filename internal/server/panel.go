@@ -48,6 +48,25 @@ func panelHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
 		}
 		http.Redirect(w, r, "/panel", http.StatusSeeOther)
 	})
+	// /panel/passkey marks passkey setup complete. The actual credential is
+	// registered via the WebAuthn /webauthn/register/{begin,finish} handlers;
+	// this endpoint flips the onboarding flag once registration succeeds.
+	mux.HandleFunc("/panel/passkey", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		u, ok := sessionUser(r, st, key)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if err := st.SetPasskeySetup(r.Context(), u.ID, true); err != nil {
+			http.Error(w, "passkey error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/panel", http.StatusSeeOther)
+	})
 	mux.HandleFunc("/panel/profile", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -125,8 +144,34 @@ var panelTemplates = template.Must(template.New("panel").Parse(`<!doctype html>
 <section>
 <h2>Set up your passkey</h2>
 <p>Your account uses passkeys for authentication. Set one up now.</p>
-<p>Use the passkey registration flow to add a passkey to this account.</p>
+<button id="register" type="button">Register passkey</button>
+<p id="status"></p>
 </section>
+<script>
+const handle = "{{.Handle}}";
+const status = document.getElementById("status");
+const btn = document.getElementById("register");
+btn.addEventListener("click", async () => {
+  try {
+    status.textContent = "Contacting server…";
+    const begin = await fetch("/webauthn/register/begin?handle=" + encodeURIComponent(handle));
+    if (!begin.ok) throw new Error("begin failed: " + begin.status);
+    const options = await begin.json();
+    const cred = await navigator.credentials.create({ publicKey: options });
+    const finish = await fetch("/webauthn/register/finish?handle=" + encodeURIComponent(handle) + "&challenge=" + encodeURIComponent(options.challenge), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cred)
+    });
+    if (!finish.ok) throw new Error("finish failed: " + finish.status);
+    const done = await fetch("/panel/passkey", { method: "POST" });
+    if (!done.ok) throw new Error("complete failed: " + done.status);
+    window.location.href = "/panel";
+  } catch (e) {
+    status.textContent = "Error: " + e.message;
+  }
+});
+</script>
 {{else}}
 <section>
 <h2>Your profile</h2>
@@ -149,13 +194,14 @@ var panelTemplates = template.Must(template.New("panel").Parse(`<!doctype html>
 type panelData struct {
 	Title       string
 	View        string
+	Handle      string
 	DisplayName string
 	Bio         string
 }
 
 // renderPanel renders a panel page.
 func renderPanel(w http.ResponseWriter, view string, u *store.User, page *store.ProfilePage) {
-	data := panelData{View: view}
+	data := panelData{View: view, Handle: u.Handle}
 	switch view {
 	case "tos":
 		data.Title = "Terms of Service"
