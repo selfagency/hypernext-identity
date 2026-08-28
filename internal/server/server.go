@@ -286,6 +286,8 @@ func (s *Server) buildRouter() {
 		// Admin user creation + magic-link invite.
 		userHandler := &admin.UserHandler{Store: s.store, Sender: s.mailer, BaseURL: "https://" + identityHost}
 		identity.Handle("/admin/users", adminGuard.Middleware(userHandler))
+		// Magic-link redemption (public, no admin guard).
+		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial(), "https://"+identityHost))
 		// IPFS pinning broker, behind the admin guard.
 		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
 		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))
