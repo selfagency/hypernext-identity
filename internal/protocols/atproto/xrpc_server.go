@@ -2,6 +2,7 @@ package atproto
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,6 +21,8 @@ type XRPCServer struct {
 	Backend func(tenantID string) storage.Backend
 	// RepoFactory builds a repo for a DID (per-tenant blockstore).
 	RepoFactory func(ctx context.Context, did string) (*Repo, error)
+	// SigningKey signs atproto session JWTs.
+	SigningKey *rsa.PrivateKey
 }
 
 // ServeHTTP routes XRPC method calls.
@@ -41,6 +44,8 @@ func (s *XRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.getBlob(w, r)
 	case "com.atproto.sync.getRepo":
 		s.getRepo(w, r)
+	case "com.atproto.server.createSession":
+		s.createSession(w, r)
 	default:
 		writeXRPCError(w, http.StatusNotImplemented, "MethodNotImplemented", "method not implemented: "+method)
 	}
