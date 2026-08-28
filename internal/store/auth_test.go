@@ -315,8 +315,13 @@ func TestUserOnboardingState(t *testing.T) {
 	if u2.Email != "b@example.com" || !u2.ToSAccepted || !u2.PasskeySetup {
 		t.Fatalf("updated user = %+v", u2)
 	}
+}
 
-	// Unknown user -> ErrNotFound.
+// TestUserOnboardingStateUnknownUser verifies setters on a missing user
+// return ErrNotFound.
+func TestUserOnboardingStateUnknownUser(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
 	if err := s.SetUserEmail(ctx, "nope", "x@example.com"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown email = %v, want ErrNotFound", err)
 	}

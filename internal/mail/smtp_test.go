@@ -93,7 +93,7 @@ func TestSMTPHappyPath(t *testing.T) {
 	var portNum int
 	_, _ = fmt.Sscanf(port, "%d", &portNum)
 
-	s := NewSMTP(SMTPConfig{Host: host, Port: portNum, From: "no-reply@example.com"})
+	s := NewSMTP(&SMTPConfig{Host: host, Port: portNum, From: "no-reply@example.com"})
 	if err := s.Send(context.Background(), Message{To: "alice@example.com", Subject: "hi", Body: "body"}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestSMTPDialError(t *testing.T) {
 	var portNum int
 	_, _ = fmt.Sscanf(port, "%d", &portNum)
 
-	s := NewSMTP(SMTPConfig{Host: host, Port: portNum})
+	s := NewSMTP(&SMTPConfig{Host: host, Port: portNum})
 	if err := s.Send(context.Background(), Message{To: "a@example.com", Subject: "s", Body: "b"}); err == nil {
 		t.Fatal("expected dial error")
 	}

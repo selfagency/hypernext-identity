@@ -82,7 +82,7 @@ type SMTPConfig struct {
 }
 
 // Enabled reports whether SMTP is configured for sending.
-func (s SMTPConfig) Enabled() bool {
+func (s *SMTPConfig) Enabled() bool {
 	return s.Host != "" && s.Port != 0
 }
 

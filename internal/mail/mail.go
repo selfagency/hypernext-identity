@@ -35,7 +35,7 @@ type SMTPConfig struct {
 }
 
 // Enabled reports whether SMTP is configured for sending.
-func (c SMTPConfig) Enabled() bool {
+func (c *SMTPConfig) Enabled() bool {
 	return c.Host != "" && c.Port != 0
 }
 
@@ -45,8 +45,8 @@ type SMTP struct {
 }
 
 // NewSMTP builds an SMTP sender.
-func NewSMTP(cfg SMTPConfig) *SMTP {
-	return &SMTP{cfg: cfg}
+func NewSMTP(cfg *SMTPConfig) *SMTP {
+	return &SMTP{cfg: *cfg}
 }
 
 // Send delivers a message via SMTP. It uses the plain auth mechanism when
