@@ -182,3 +182,40 @@ func TestSubjectValidatorInvalid(t *testing.T) {
 		t.Fatal("expected error for empty token")
 	}
 }
+
+// TestSubjectValidatorWebIDClaim proves the webid claim takes precedence over
+// sub for the Solid agent identity (Solid-OIDC).
+func TestSubjectValidatorWebIDClaim(t *testing.T) {
+	_, as := newTestStores(t)
+	ctx := context.Background()
+	tok, err := auth.MintAccessTokenWebID(as.SigningKey(), "alice", "https://alice.example.com/profile#me", []string{"openid"}, auth.AccessTokenTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v := &SubjectValidator{Key: as.SigningKey()}
+	subject, err := v.ValidateToken(ctx, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subject != "https://alice.example.com/profile#me" {
+		t.Fatalf("subject = %q, want the webid claim", subject)
+	}
+}
+
+// TestSubjectValidatorSubFallback proves a token without a webid claim falls
+// back to sub.
+func TestSubjectValidatorSubFallback(t *testing.T) {
+	_, as := newTestStores(t)
+	ctx := context.Background()
+	tok := mintAccessToken(t, as, "alice", []string{"openid"})
+
+	v := &SubjectValidator{Key: as.SigningKey()}
+	subject, err := v.ValidateToken(ctx, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subject != "alice" {
+		t.Fatalf("subject = %q, want alice (sub fallback)", subject)
+	}
+}

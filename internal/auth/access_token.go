@@ -18,6 +18,7 @@ const AccessTokenTTL = 15 * time.Minute
 // AccessToken is the claim set carried by a signed resource-access token.
 type AccessToken struct {
 	Subject  string   `json:"sub"`
+	WebID    string   `json:"webid,omitempty"`
 	Scopes   []string `json:"scp"`
 	Issuer   string   `json:"iss,omitempty"`
 	Audience string   `json:"aud,omitempty"`
@@ -27,8 +28,15 @@ type AccessToken struct {
 }
 
 // MintAccessToken signs a short-lived access token for subject with the given
-// scopes using the RSA signing key.
+// scopes using the RSA signing key. webID, if non-empty, is carried as the
+// Solid-OIDC webid claim (the agent's WebID at resource endpoints).
 func MintAccessToken(priv *rsa.PrivateKey, subject string, scopes []string, ttl time.Duration) (string, error) {
+	return MintAccessTokenWebID(priv, subject, "", scopes, ttl)
+}
+
+// MintAccessTokenWebID signs an access token with an explicit Solid-OIDC
+// webid claim.
+func MintAccessTokenWebID(priv *rsa.PrivateKey, subject, webID string, scopes []string, ttl time.Duration) (string, error) {
 	if priv == nil {
 		return "", errors.New("auth: nil signing key")
 	}
@@ -39,6 +47,7 @@ func MintAccessToken(priv *rsa.PrivateKey, subject string, scopes []string, ttl 
 	now := time.Now()
 	claims := AccessToken{
 		Subject:  subject,
+		WebID:    webID,
 		Scopes:   scopes,
 		Expiry:   now.Add(ttl).Unix(),
 		IssuedAt: now.Unix(),
