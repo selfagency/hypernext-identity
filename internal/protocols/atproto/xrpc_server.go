@@ -35,6 +35,10 @@ func (s *XRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.createRecord(w, r)
 	case "com.atproto.repo.getRecord":
 		s.getRecord(w, r)
+	case "com.atproto.repo.uploadBlob":
+		s.uploadBlob(w, r)
+	case "com.atproto.sync.getBlob":
+		s.getBlob(w, r)
 	default:
 		writeXRPCError(w, http.StatusNotImplemented, "MethodNotImplemented", "method not implemented: "+method)
 	}
@@ -189,6 +193,51 @@ func unwrapCBORBytes(data []byte) []byte {
 		}
 	}
 	return data
+}
+
+// uploadBlob implements com.atproto.repo.uploadBlob. It stores the request
+// body as a content-addressed blob and returns its CID.
+func (s *XRPCServer) uploadBlob(w http.ResponseWriter, r *http.Request) {
+	if s.Backend == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "blob backend not configured")
+		return
+	}
+	bs := NewBlobStore(s.Backend(""))
+	key, err := bs.Put(r.Context(), r.Body)
+	if err != nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"blob": map[string]any{
+			"ref":      map[string]string{"$link": key},
+			"mimeType": r.Header.Get("Content-Type"),
+			"size":     r.ContentLength,
+		},
+	})
+}
+
+// getBlob implements com.atproto.sync.getBlob. It serves a stored blob by
+// its content CID.
+func (s *XRPCServer) getBlob(w http.ResponseWriter, r *http.Request) {
+	if s.Backend == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "blob backend not configured")
+		return
+	}
+	cid := r.URL.Query().Get("cid")
+	if cid == "" {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "cid is required")
+		return
+	}
+	bs := NewBlobStore(s.Backend(""))
+	rc, err := bs.Get(r.Context(), cid)
+	if err != nil {
+		writeXRPCError(w, http.StatusNotFound, "BlobNotFound", "blob not found")
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	_, _ = io.Copy(w, rc)
 }
 
 // writeJSON writes a JSON response.
