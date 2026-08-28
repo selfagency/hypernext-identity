@@ -288,6 +288,9 @@ func (s *Server) buildRouter() {
 		identity.Handle("/admin/users", adminGuard.Middleware(userHandler))
 		// Magic-link redemption (public, no admin guard).
 		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial(), "https://"+identityHost))
+		// User panel (first-login ToS + passkey + profile).
+		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial()))
+		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial()))
 		// IPFS pinning broker, behind the admin guard.
 		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
 		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))
