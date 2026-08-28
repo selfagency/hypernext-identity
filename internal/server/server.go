@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,6 +19,7 @@ import (
 	"github.com/selfagency/sovereign/internal/moderation"
 	"github.com/selfagency/sovereign/internal/protocols/activitypub"
 	"github.com/selfagency/sovereign/internal/protocols/atproto"
+	"github.com/selfagency/sovereign/internal/protocols/hyperlink"
 	"github.com/selfagency/sovereign/internal/protocols/ipfspin"
 	"github.com/selfagency/sovereign/internal/protocols/nodeinfo"
 	"github.com/selfagency/sovereign/internal/protocols/remotestorage"
@@ -313,19 +313,67 @@ func (t sqliteTenantStore) FindByHost(ctx context.Context, host string) (*tenant
 	}, nil
 }
 
-// hcardHandler serves the HTML h-card profile.
+// hcardHandler serves the HTML h-card profile from the store. It renders a
+// uniform 404 for unpublished/unknown profiles (no tenant-enumeration signal).
 func (s *Server) hcardHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		t, ok := tenant.FromContext(r.Context())
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		page, err := s.store.GetProfilePage(r.Context(), t.ID)
+		if err != nil || !page.IsPublished {
+			http.NotFound(w, r)
+			return
+		}
+		links, _ := s.store.ListProfileLinks(r.Context(), page.ID)
+		p := &hyperlink.Profile{
+			Handle:      t.Handle,
+			DisplayName: page.DisplayName,
+			Bio:         page.Bio,
+			Published:   true,
+		}
+		for i := range links {
+			if !links[i].IsVisible {
+				continue
+			}
+			p.Links = append(p.Links, hyperlink.Link{
+				Label:   links[i].Label,
+				URL:     links[i].URL,
+				Visible: true,
+			})
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = fmt.Fprintf(w, "<html><body><div class=\"h-card\"><h1 class=\"p-name\">%s</h1></div></body></html>", html.EscapeString(r.Host))
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		_ = hyperlink.RenderHTML(w, p)
 	}
 }
 
-// didDocHandler serves the DID document.
+// didDocHandler serves the DID document. It uses the tenant's real DID when
+// set, falling back to did:web:<host>.
 func (s *Server) didDocHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		t, ok := tenant.FromContext(r.Context())
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		tn, err := s.store.GetTenantByHandle(r.Context(), t.Handle)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		did := tn.DID
+		if did == "" {
+			did = "did:web:" + r.Host
+		}
 		w.Header().Set("Content-Type", "application/did+json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"id": "did:web:" + r.Host})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"@context":    []string{"https://www.w3.org/ns/did/v1"},
+			"id":          did,
+			"alsoKnownAs": []string{"https://" + r.Host + "/profile/"},
+		})
 	}
 }
 

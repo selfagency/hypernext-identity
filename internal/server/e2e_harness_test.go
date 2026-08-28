@@ -94,6 +94,26 @@ func (ts *testServer) get(t *testing.T, path, host string) (status int, body str
 	return ts.do(t, http.MethodGet, path, host, "", "", nil)
 }
 
+// getWithAccept performs a GET with an explicit Accept header.
+func (ts *testServer) getWithAccept(t *testing.T, path, host, accept string) (status int, body string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, ts.baseURL+path, http.NoBody)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if host != "" {
+		req.Host = host
+	}
+	req.Header.Set("Accept", accept)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
 // do performs a request with the given method, Host header, bearer token,
 // and body, returning status + body.
 func (ts *testServer) do(t *testing.T, method, path, host, token, contentType string, body []byte) (status int, respBody string) {

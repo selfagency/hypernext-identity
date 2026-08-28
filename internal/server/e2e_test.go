@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // TestE2EWebFinger verifies the real server serves WebFinger over HTTP.
@@ -24,6 +26,17 @@ func TestE2EWebFinger(t *testing.T) {
 // TestE2EProfile verifies the content-negotiated profile endpoint.
 func TestE2EProfile(t *testing.T) {
 	ts := startTestServer(t, &Config{}, true)
+
+	// Seed a published profile so the h-card renders store data.
+	if err := ts.srv.store.UpsertProfilePage(context.Background(), &store.ProfilePage{
+		ID:          "p1",
+		TenantID:    "t1",
+		AccountID:   "acct1",
+		DisplayName: "Alice A.",
+		IsPublished: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Default (h-card).
 	code, body := ts.get(t, "/profile/", "alice.example.com")

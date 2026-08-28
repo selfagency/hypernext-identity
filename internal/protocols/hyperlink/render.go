@@ -49,7 +49,7 @@ func (r *Renderer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	_ = renderHTML(w, profile)
+	_ = RenderHTML(w, profile)
 }
 
 // acceptsJSON reports whether the Accept header prefers JSON.
@@ -57,8 +57,8 @@ func acceptsJSON(accept string) bool {
 	return strings.Contains(accept, "application/json")
 }
 
-// renderHTML renders the profile page with h-card microformats2 markup.
-func renderHTML(w http.ResponseWriter, p *Profile) error {
+// RenderHTML renders the profile page with h-card microformats2 markup.
+func RenderHTML(w http.ResponseWriter, p *Profile) error {
 	tmpl := template.Must(template.New("profile").Parse(profileTemplate))
 	return tmpl.Execute(w, p)
 }
