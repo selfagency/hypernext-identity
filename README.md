@@ -38,7 +38,7 @@ systems or cryptography expert.
 | WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register\|login/{begin,finish}` |
 | Admin backup + moderation | **Shipped** | identity host `/admin/backup`, `/admin/moderation/takedown` (admin-guarded) |
 | Backup / restore | **Shipped** | `internal/backup` — scheduled backups + restore |
-| IndieAuth | Planned | not wired |
+| IndieAuth | **Shipped** | identity host `/indieauth/auth`, `/indieauth/token` |
 | IPFS pinning (optional broker) | Planned | `internal/protocols/ipfspin` |
 
 Legend — **Shipped**: live route + tests in CI. **Partial**: a named subset
