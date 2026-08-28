@@ -56,6 +56,15 @@ func MintAccessTokenWebID(priv *rsa.PrivateKey, subject, webID string, scopes []
 	return jwt.Signed(signer).Claims(claims).Serialize()
 }
 
+// IssueForProfile mints an access token for an IndieAuth identity URL. The
+// profile URL is the token's subject (the authenticated identity).
+func IssueForProfile(priv *rsa.PrivateKey, profileURL string, scopes []string) (string, error) {
+	if profileURL == "" {
+		return "", errors.New("auth: profile URL is required")
+	}
+	return MintAccessToken(priv, profileURL, scopes, AccessTokenTTL)
+}
+
 // ValidateAccessToken verifies the signature and expiry of an access token and
 // returns its claims. It rejects expired tokens and tokens signed by a
 // different key.

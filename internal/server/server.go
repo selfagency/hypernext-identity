@@ -20,6 +20,7 @@ import (
 	"github.com/selfagency/sovereign/internal/protocols/activitypub"
 	"github.com/selfagency/sovereign/internal/protocols/atproto"
 	"github.com/selfagency/sovereign/internal/protocols/hyperlink"
+	"github.com/selfagency/sovereign/internal/protocols/indieauth"
 	"github.com/selfagency/sovereign/internal/protocols/ipfspin"
 	"github.com/selfagency/sovereign/internal/protocols/nodeinfo"
 	"github.com/selfagency/sovereign/internal/protocols/remotestorage"
@@ -243,7 +244,9 @@ func (s *Server) buildRouter() {
 		},
 	}
 
-	// IndieAuth is a separate phase; the bridge is not wired yet.
+	// IndieAuth bridge, served on the identity host. It mints tokens for an
+	// IndieAuth identity URL via the shared OIDC signing key.
+	iaBridge := indieauth.NewBridge(true, &indieauthIssuer{key: s.authStore.SigningKeyMaterial()})
 
 	// Host-based dispatch: the identity host serves the OIDC provider and
 	// WebAuthn endpoints; every other host serves the protocol mux.
@@ -259,6 +262,10 @@ func (s *Server) buildRouter() {
 			identity.Handle("/webauthn/login/begin", http.HandlerFunc(waHandler.LoginBegin))
 			identity.Handle("/webauthn/login/finish", http.HandlerFunc(waHandler.LoginFinish))
 		}
+		// IndieAuth endpoints.
+		iaSessions := newIndieAuthSessionStore()
+		identity.Handle("/indieauth/auth", http.HandlerFunc(indieAuthAuthorize(iaBridge, iaSessions)))
+		identity.Handle("/indieauth/token", http.HandlerFunc(indieAuthToken(iaBridge, iaSessions)))
 		// Admin routes on the identity host, behind the admin guard.
 		identity.Handle("/admin/backup", adminGuard.Middleware(backupHandler))
 		identity.Handle("/admin/moderation/takedown", adminGuard.Middleware(takedown))
