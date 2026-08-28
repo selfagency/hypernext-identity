@@ -13,6 +13,7 @@ import (
 	"github.com/selfagency/sovereign/internal/protocols/atproto"
 	"github.com/selfagency/sovereign/internal/storage"
 	"github.com/selfagency/sovereign/internal/store"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // writeConfig writes a test config file.
@@ -112,6 +113,14 @@ func TestServerRoutes(t *testing.T) {
 
 	// Seed a tenant so the tenant middleware resolves the host.
 	_ = srv.store.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+	// Seed a published profile so /profile/ renders.
+	_ = srv.store.UpsertProfilePage(context.Background(), &store.ProfilePage{
+		ID:          "p1",
+		TenantID:    "t1",
+		AccountID:   "acct1",
+		DisplayName: "Alice A.",
+		IsPublished: true,
+	})
 
 	cases := []struct {
 		path string
@@ -227,9 +236,24 @@ func TestBuildBlobBackendUnknown(t *testing.T) {
 
 // TestDidDocHandler verifies the DID doc endpoint.
 func TestDidDocHandler(t *testing.T) {
-	srv := &Server{}
+	cfg := &Config{
+		Domain:  "example.com",
+		DataDir: t.TempDir(),
+		Storage: StorageConfig{Backend: "fs"},
+		SQLite:  SQLiteConfig{Mode: "single"},
+		Log:     LogConfig{Level: "info", Format: "text"},
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+	_ = srv.store.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+
 	req := httptest.NewRequest("GET", "/profile/", http.NoBody)
 	req.Host = "alice.example.com"
+	req.Header.Set("Accept", "application/did+json")
+	req = req.WithContext(tenant.WithTenant(req.Context(), &tenant.Tenant{ID: "t1", Handle: "alice.example.com"}))
 	rec := httptest.NewRecorder()
 	srv.didDocHandler()(rec, req)
 	if rec.Code != http.StatusOK {

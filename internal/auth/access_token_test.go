@@ -5,6 +5,41 @@ import (
 	"time"
 )
 
+// TestIssueForProfile verifies IssueForProfile mints a token for a profile URL.
+func TestIssueForProfile(t *testing.T) {
+	store, err := NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := store.SigningKeyMaterial()
+
+	tok, err := IssueForProfile(priv, "https://alice.example.com/profile", []string{"read"})
+	if err != nil {
+		t.Fatalf("IssueForProfile: %v", err)
+	}
+	if tok == "" {
+		t.Fatal("empty token")
+	}
+	claims, err := ValidateAccessToken(priv, tok)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.Subject != "https://alice.example.com/profile" {
+		t.Fatalf("subject = %q, want the profile URL", claims.Subject)
+	}
+}
+
+// TestIssueForProfileEmptyURL verifies an empty profile URL errors.
+func TestIssueForProfileEmptyURL(t *testing.T) {
+	store, err := NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IssueForProfile(store.SigningKeyMaterial(), "", nil); err == nil {
+		t.Fatal("expected error for empty profile URL")
+	}
+}
+
 // TestMintAndValidateAccessToken verifies minting and validating a signed
 // access token round-trips the subject and scopes.
 func TestMintAndValidateAccessToken(t *testing.T) {

@@ -48,7 +48,8 @@ type SubjectValidator struct {
 }
 
 // ValidateToken returns the subject for a bearer access token, or an error if
-// the token is invalid.
+// the token is invalid. For Solid-OIDC, the webid claim (the agent's WebID)
+// takes precedence over sub; a token without a webid claim falls back to sub.
 func (v *SubjectValidator) ValidateToken(ctx context.Context, token string) (string, error) {
 	if token == "" {
 		return "", errors.New("wiring: empty token")
@@ -56,6 +57,9 @@ func (v *SubjectValidator) ValidateToken(ctx context.Context, token string) (str
 	claims, err := auth.ValidateAccessToken(v.Key, token)
 	if err != nil {
 		return "", errors.New("wiring: invalid token")
+	}
+	if claims.WebID != "" {
+		return claims.WebID, nil
 	}
 	return claims.Subject, nil
 }

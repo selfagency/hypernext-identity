@@ -43,9 +43,9 @@ live route or backing test. If you update one, update the other.
 
 | Capability | Status | Evidence | Notes |
 |:-----------|:-------|:---------|:------|
-| remoteStorage | Partial | route `/rs/` | Core read/write with tenant-prefixed isolation + bearer token check. Not the full spec surface. |
-| Solid Pod (LDP) | Partial | route `/solid/` | LDP reads/writes, WebID, and ownership ACL. Not full Solid conformance (no notifications, etc.). |
-| atproto XRPC | Partial | route `/xrpc/` | Two reads only (`resolveHandle`, `getProfile`). **Not a full PDS.** The repo/commit-signing and blob code in `internal/protocols/atproto` (`repo.go`, `blob.go`) is implemented and unit-tested but **not wired** to any endpoint — there are no `com.atproto.repo.*`, `com.atproto.sync.*`, or session routes. |
+| remoteStorage | **Shipped** | route `/rs/` | Core read/write with tenant-prefixed isolation, bearer scope enforcement, ETags, `If-Match`/`If-None-Match` conditionals, and folder listing. |
+| Solid Pod (LDP) | **Shipped** | route `/solid/` | LDP reads/writes/PATCH, HEAD/OPTIONS, Web Access Control (WAC) rule documents, and a Solid-OIDC `webid`-claim identity challenge. No live notifications. |
+| atproto XRPC | **Shipped** | route `/xrpc/` | PDS surface: `resolveHandle`, `getProfile`, `createRecord`, `getRecord`, `uploadBlob`, `sync.getBlob`, `sync.getRepo`, and passkey-authenticated `createSession`. The repo/commit-signing and blob machinery is wired to live endpoints. |
 
 ## Discovery & proofs (live routes)
 
@@ -58,7 +58,7 @@ store — they do **not** resolve a per-tenant store.
 | NodeInfo | **Shipped** | route `/.well-known/nodeinfo` | Software/protocol advertisement. |
 | Public SSH/PGP key hosting (+ WKD path) | **Shipped** | routes `/keys`, `/.well-known/openpgpkey/` | Served from the store; private-key material rejected. |
 | Keyoxide-style public proofs | **Shipped** | route `/.well-known/proofs` | Public identity proofs. |
-| Profile (h-card / actor / DID doc) | Partial | route `/profile/` | Content-negotiated; document-type coverage varies. |
+| Profile (h-card / actor / DID doc) | **Shipped** | route `/profile/` | Content-negotiated; h-card and DID doc render store data (display name, bio, links, tenant DID). |
 | ActivityPub | Partial | `internal/protocols/activitypub` | Actor document + HTTP-signature verification only; **not** a federated inbox/outbox server. |
 
 ## Platform
@@ -69,10 +69,10 @@ store — they do **not** resolve a per-tenant store.
 | Tenant-isolated blob storage | **Shipped** | `internal/storage` (`Prefixed`) | Shared FS/S3 with escape-proof tenant prefixes (ADR 0002). |
 | Single binary, pure-Go SQLite | **Shipped** | `cmd/sovereign` | No CGO; `modernc.org/sqlite` (ADR 0001). |
 | S3-compatible blob backend | **Shipped** | `internal/storage` (s3) | S3-compatible endpoint support. |
-| Backup / restore | Partial | `internal/backup` | Scheduled backups exist; the admin config handler is mounted at `/admin/backup` but the restore path is in progress. |
+| Backup / restore | **Shipped** | `internal/backup` | Scheduled backups + a restore path (ReadBackup + Scheduler.Restore). |
 | Moderation (takedown) | **Shipped** | `/admin/moderation/takedown` | Takedown handler + persistent audit log, mounted behind the admin guard. |
-| IndieAuth | Planned | — | Not wired. |
-| IPFS pinning (broker) | Planned | `internal/protocols/ipfspin` | Optional client only; no embedded node, no standalone endpoint. |
+| IndieAuth | **Shipped** | identity host `/indieauth/auth`, `/indieauth/token` | Authorization + token exchange wired; mints tokens for an identity URL via the shared OIDC signing key. |
+| IPFS pinning (broker) | **Shipped** | identity host `/ipfs/pin` | Admin-guarded pin/status surface; persists the pin set in the store and calls the configured Kubo RPC backend when `ipfs.enabled`. |
 
 ## Live HTTP surface
 

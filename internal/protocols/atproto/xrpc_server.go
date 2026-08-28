@@ -1,10 +1,15 @@
 package atproto
 
 import (
+	"context"
+	"crypto/rsa"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 
+	"github.com/selfagency/sovereign/internal/storage"
 	"github.com/selfagency/sovereign/internal/store"
 )
 
@@ -12,6 +17,12 @@ import (
 // in the request context.
 type XRPCServer struct {
 	Store *store.Store
+	// Backend returns the storage backend for a tenant (used for blobs).
+	Backend func(tenantID string) storage.Backend
+	// RepoFactory builds a repo for a DID (per-tenant blockstore).
+	RepoFactory func(ctx context.Context, did string) (*Repo, error)
+	// SigningKey signs atproto session JWTs.
+	SigningKey *rsa.PrivateKey
 }
 
 // ServeHTTP routes XRPC method calls.
@@ -23,6 +34,18 @@ func (s *XRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.resolveHandle(w, r)
 	case "app.bsky.actor.getProfile":
 		s.getProfile(w, r)
+	case "com.atproto.repo.createRecord":
+		s.createRecord(w, r)
+	case "com.atproto.repo.getRecord":
+		s.getRecord(w, r)
+	case "com.atproto.repo.uploadBlob":
+		s.uploadBlob(w, r)
+	case "com.atproto.sync.getBlob":
+		s.getBlob(w, r)
+	case "com.atproto.sync.getRepo":
+		s.getRepo(w, r)
+	case "com.atproto.server.createSession":
+		s.createSession(w, r)
 	default:
 		writeXRPCError(w, http.StatusNotImplemented, "MethodNotImplemented", "method not implemented: "+method)
 	}
@@ -70,6 +93,182 @@ func (s *XRPCServer) getProfile(w http.ResponseWriter, r *http.Request) {
 		"handle":      t.Handle,
 		"displayName": t.Handle,
 	})
+}
+
+// createRecord implements com.atproto.repo.createRecord. It writes a record
+// to the repo for the authenticated DID and commits it.
+func (s *XRPCServer) createRecord(w http.ResponseWriter, r *http.Request) {
+	if s.RepoFactory == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "repo factory not configured")
+		return
+	}
+	var in struct {
+		Repo       string          `json:"repo"`
+		Collection string          `json:"collection"`
+		Record     json.RawMessage `json:"record"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "bad body")
+		return
+	}
+	if in.Repo == "" || in.Collection == "" || len(in.Record) == 0 {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "repo, collection, and record are required")
+		return
+	}
+	repo, err := s.RepoFactory(r.Context(), in.Repo)
+	if err != nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	defer func() { _ = repo.Close() }()
+	rec := &jsonRecord{data: in.Record}
+	cid, tid, err := repo.CreateRecord(r.Context(), in.Collection, rec)
+	if err != nil {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRecord", err.Error())
+		return
+	}
+	commitCid, rev, err := repo.Commit(r.Context())
+	if err != nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"uri":    "at://" + in.Repo + "/" + in.Collection + "/" + tid,
+		"cid":    cid,
+		"commit": map[string]string{"cid": commitCid, "rev": rev},
+	})
+}
+
+// getRecord implements com.atproto.repo.getRecord. It reads a record back
+// from the repo.
+func (s *XRPCServer) getRecord(w http.ResponseWriter, r *http.Request) {
+	if s.RepoFactory == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "repo factory not configured")
+		return
+	}
+	repo := r.URL.Query().Get("repo")
+	collection := r.URL.Query().Get("collection")
+	rkey := r.URL.Query().Get("rkey")
+	if repo == "" || collection == "" || rkey == "" {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "repo, collection, and rkey are required")
+		return
+	}
+	rp, err := s.RepoFactory(r.Context(), repo)
+	if err != nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	defer func() { _ = rp.Close() }()
+	_, data, err := rp.GetRecordBytes(r.Context(), collection+"/"+rkey)
+	if err != nil {
+		writeXRPCError(w, http.StatusNotFound, "RecordNotFound", "record not found")
+		return
+	}
+	// The record is stored as a CBOR byte-string wrapping the JSON; unwrap it.
+	value := unwrapCBORBytes(data)
+	writeJSON(w, map[string]any{
+		"uri":   "at://" + repo + "/" + collection + "/" + rkey,
+		"value": json.RawMessage(value),
+	})
+}
+
+// jsonRecord adapts a raw JSON record to the repo's CborMarshaler.
+type jsonRecord struct {
+	data json.RawMessage
+}
+
+// MarshalCBOR encodes the JSON record as a CBOR byte string so it round-trips.
+func (j *jsonRecord) MarshalCBOR(w io.Writer) error {
+	if len(j.data) > 255 {
+		return errors.New("atproto: record too large for byte-string encoding")
+	}
+	// #nosec G115 -- len(j.data) is bounded to <= 255 above, so the int->byte
+	// conversion cannot overflow.
+	hdr := []byte{0x58, byte(len(j.data))}
+	_, err := w.Write(append(hdr, j.data...))
+	return err
+}
+
+// unwrapCBORBytes extracts the JSON payload from a CBOR byte-string wrapper
+// (the format jsonRecord.MarshalCBOR writes).
+func unwrapCBORBytes(data []byte) []byte {
+	// CBOR major type 2 (byte string): 0x40-0x5b. We wrote 0x58 <len> <json>.
+	if len(data) >= 2 && data[0] == 0x58 {
+		l := int(data[1])
+		if len(data) >= 2+l {
+			return data[2 : 2+l]
+		}
+	}
+	return data
+}
+
+// uploadBlob implements com.atproto.repo.uploadBlob. It stores the request
+// body as a content-addressed blob and returns its CID.
+func (s *XRPCServer) uploadBlob(w http.ResponseWriter, r *http.Request) {
+	if s.Backend == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "blob backend not configured")
+		return
+	}
+	bs := NewBlobStore(s.Backend(""))
+	key, err := bs.Put(r.Context(), r.Body)
+	if err != nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"blob": map[string]any{
+			"ref":      map[string]string{"$link": key},
+			"mimeType": r.Header.Get("Content-Type"),
+			"size":     r.ContentLength,
+		},
+	})
+}
+
+// getBlob implements com.atproto.sync.getBlob. It serves a stored blob by
+// its content CID.
+func (s *XRPCServer) getBlob(w http.ResponseWriter, r *http.Request) {
+	if s.Backend == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "blob backend not configured")
+		return
+	}
+	cid := r.URL.Query().Get("cid")
+	if cid == "" {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "cid is required")
+		return
+	}
+	bs := NewBlobStore(s.Backend(""))
+	rc, err := bs.Get(r.Context(), cid)
+	if err != nil {
+		writeXRPCError(w, http.StatusNotFound, "BlobNotFound", "blob not found")
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	_, _ = io.Copy(w, rc)
+}
+
+// getRepo implements com.atproto.sync.getRepo. It exports the repo as a CAR.
+func (s *XRPCServer) getRepo(w http.ResponseWriter, r *http.Request) {
+	if s.RepoFactory == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "repo factory not configured")
+		return
+	}
+	did := r.URL.Query().Get("did")
+	if did == "" {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "did is required")
+		return
+	}
+	rp, err := s.RepoFactory(r.Context(), did)
+	if err != nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	defer func() { _ = rp.Close() }()
+	w.Header().Set("Content-Type", "application/vnd.ipld.car")
+	if err := rp.WriteCAR(r.Context(), w); err != nil {
+		writeXRPCError(w, http.StatusNotFound, "RepoNotFound", "repo not found")
+		return
+	}
 }
 
 // writeJSON writes a JSON response.

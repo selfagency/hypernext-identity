@@ -29,17 +29,17 @@ systems or cryptography expert.
 | NodeInfo | **Shipped** | `/.well-known/nodeinfo` |
 | Public SSH/PGP key hosting (+ WKD path) | **Shipped** | `/keys`, `/.well-known/openpgpkey/` |
 | Keyoxide-style public identity proofs | **Shipped** | `/.well-known/proofs` |
-| Solid Pod (LDP reads/writes, WebID, ownership ACL) | Partial | `/solid/` |
-| remoteStorage (core read/write) | Partial | `/rs/` |
-| AT Protocol PDS (repo + a small set of XRPC reads) | Partial | `/xrpc/` |
-| Profile (content-negotiated h-card / actor / DID doc) | Partial | `/profile/` |
+| Solid Pod (LDP + PATCH + WAC + Solid-OIDC) | **Shipped** | `/solid/` |
+| remoteStorage (core read/write + conditionals + folder listing) | **Shipped** | `/rs/` |
+| AT Protocol PDS (repo writes, blobs, sync, sessions) | **Shipped** | `/xrpc/` |
+| Profile (content-negotiated h-card / actor / DID doc) | **Shipped** | `/profile/` |
 | ActivityPub (actor document + HTTP-signature verification) | Partial | `internal/protocols/activitypub` |
 | OIDC provider | **Shipped** | identity host `id.<domain>` — discovery/authorize/token/userinfo/jwks |
 | WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register\|login/{begin,finish}` |
 | Admin backup + moderation | **Shipped** | identity host `/admin/backup`, `/admin/moderation/takedown` (admin-guarded) |
-| Backup / restore | Partial | `internal/backup` — scheduled backups; restore in progress |
-| IndieAuth | Planned | not wired |
-| IPFS pinning (optional broker) | Planned | `internal/protocols/ipfspin` |
+| Backup / restore | **Shipped** | `internal/backup` — scheduled backups + restore |
+| IndieAuth | **Shipped** | identity host `/indieauth/auth`, `/indieauth/token` |
+| IPFS pinning (optional broker) | **Shipped** | identity host `/ipfs/pin` (admin-guarded) |
 
 Legend — **Shipped**: live route + tests in CI. **Partial**: a named subset
 works and is tested; the gap is stated. **Planned**: designed, not built.

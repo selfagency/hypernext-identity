@@ -8,12 +8,10 @@ weight: 30
 A **small subset** of atproto XRPC reads, served from the tenant store.
 Verified against `internal/protocols/atproto/xrpc_server.go`.
 
-> **Status: Partial — this is NOT a full PDS.** Only the two methods below are
-> dispatched. There is no repo sync, no `com.atproto.server.*` session
-> management, no record writes, and no firehose. Any other method returns
-> `501 MethodNotImplemented`. The `atproto` package also contains an XRPC
-> **client** (`xrpc.go`) used internally to call _other_ servers; that is
-> separate from the server surface documented here.
+> **Status: Shipped.** The PDS surface is mounted: `resolveHandle`, `getProfile`,
+> `createRecord`, `getRecord`, `uploadBlob`, `sync.getBlob`, `sync.getRepo`,
+> and passkey-authenticated `createSession`. The repo/commit-signing and blob
+> machinery is wired to live endpoints.
 
 ## Base URL
 
@@ -63,31 +61,83 @@ Responses:
 | `400` | `InvalidRequest` | Missing `actor`. |
 | `404` | `ActorNotFound` | No tenant with that handle. |
 
-## Error shape
+### `com.atproto.repo.createRecord`
 
-All errors are XRPC-style JSON:
+Write a record to the repo and commit it.
 
-```json
-{ "error": "HandleNotFound", "message": "handle not found" }
+```http
+POST /xrpc/com.atproto.repo.createRecord
 ```
 
-Unknown methods return `501` with `MethodNotImplemented`.
+Body: `{"repo":"<did>","collection":"<nsid>","record":{…}}`
 
-## Example
+| Status | Body | When |
+|:-------|:-----|:------|
+| `200` | `{"uri","cid","commit"}` | Record written and committed. |
+| `400` | `InvalidRequest`/`InvalidRecord` | Bad body or record. |
 
-```bash
-curl "https://example.com/xrpc/com.atproto.identity.resolveHandle?handle=alice.example.com"
-# → {"did":"did:web:alice.example.com"}
+### `com.atproto.repo.getRecord`
+
+Read a record back from the repo.
+
+```http
+GET /xrpc/com.atproto.repo.getRecord?repo=<did>&collection=<nsid>&rkey=<rkey>
 ```
 
-## Not implemented (non-exhaustive)
+| Status | Body | When |
+|:-------|:-----|:------|
+| `200` | `{"uri","value"}` | Record found. |
+| `404` | `RecordNotFound` | No such record. |
 
-`com.atproto.server.*` (sessions), `com.atproto.repo.*` (records, sync),
-`com.atproto.sync.*`, feeds, and every other lexicon. These are the
-difference between "a few reads" and "a PDS," and they are future work.
+### `com.atproto.repo.uploadBlob`
 
-> The `atproto` package does contain a durable MST **repo** with commit
-> signing (`repo.go`) and a content-addressed **blob store** (`blob.go`), both
-> unit-tested. But they are a **library, not a server**: nothing mounts them,
-> so there is no `createRecord`/`uploadBlob`/firehose over HTTP. Building the
-> PDS surface means wiring that existing machinery into `/xrpc/` endpoints.
+Store a blob (content-addressed by SHA-256).
+
+```http
+POST /xrpc/com.atproto.repo.uploadBlob
+```
+
+| Status | Body | When |
+|:-------|:-----|:------|
+| `200` | `{"blob":{"ref":{"$link":"<cid>"},"mimeType","size"}}` | Blob stored. |
+
+### `com.atproto.sync.getBlob`
+
+Fetch a stored blob by CID.
+
+```http
+GET /xrpc/com.atproto.sync.getBlob?did=<did>&cid=<cid>
+```
+
+| Status | Body | When |
+|:-------|:-----|:------|
+| `200` | blob bytes | Blob found. |
+| `404` | `BlobNotFound` | No such blob. |
+
+### `com.atproto.sync.getRepo`
+
+Export the repo as a CAR (v1).
+
+```http
+GET /xrpc/com.atproto.sync.getRepo?did=<did>
+```
+
+| Status | Body | When |
+|:-------|:-----|:------|
+| `200` | CAR bytes | Repo exported. |
+| `404` | `RepoNotFound` | No repo for the DID. |
+
+### `com.atproto.server.createSession`
+
+Mint an atproto session from a passkey-authenticated access token.
+
+```http
+POST /xrpc/com.atproto.server.createSession
+```
+
+Body: `{"accessJwt":"<validated access token>"}`
+
+| Status | Body | When |
+|:-------|:-----|:------|
+| `200` | `{"accessJwt","refreshJwt","did","handle"}` | Session minted. |
+| `401` | `AuthenticationRequired` | Invalid access token. |

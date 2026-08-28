@@ -9,12 +9,10 @@ Serves Linked Data Platform (LDP) reads and writes for the tenant resolved
 from the request host, with WebID-derived agents and an ownership ACL.
 Verified against `internal/protocols/solid/ldp.go`.
 
-> **Status: Partial.** LDP `GET`/`PUT`/`POST`/`DELETE`, container listings as
-> Turtle, and an ownership-based ACL work and are tested. This is **not** a
-> spec-conformant Solid Pod: there are no live notifications, no `PATCH`
-> (despite being advertised in `Allow`), no WAC rule documents, and no
-> Solid-OIDC identity challenge. The ACL is **ownership-based** (see below),
-> not full Web Access Control.
+> **Status: Shipped.** LDP `GET`/`PUT`/`POST`/`PATCH`/`DELETE`, `HEAD`,
+> `OPTIONS`, container listings as Turtle, Web Access Control (WAC) rule
+> documents, and a Solid-OIDC `webid`-claim identity challenge all work and
+> are tested. The ACL is WAC-based with an ownership fallback.
 
 ## Base URL
 
@@ -38,16 +36,17 @@ Authorization: Bearer <token>
 Authentication never fails the request by itself — it only changes *who is
 asking*. Whether the request is allowed is decided by the ACL.
 
-## Access control (ownership ACL)
+## Access control (WAC + ownership fallback)
 
-The ACL is **ownership-based** (`internal/wiring.ACLChecker`): the tenant who
-owns the resource can read and write it. It is not yet a full WAC
-implementation with per-resource rule documents.
+The ACL is **Web Access Control** (`internal/protocols/solid.WACChecker`): it
+evaluates `.acl` rule documents (Turtle) and falls back to the ownership-based
+checker when no ACL resource exists. Supported ACL predicates: `acl:agent`,
+`acl:agentClass` (`acl:AuthenticatedAgent`), `acl:accessTo`, and `acl:mode`.
 
-| Check | Public agent | Owning agent |
-|:------|:-------------|:-------------|
-| `CanRead` | per ACL (default deny for private data) | allowed |
-| `CanWrite` | denied | allowed |
+| Check | Public agent | Owning agent | ACL-granted agent |
+|:------|:-------------|:-------------|:------------------|
+| `CanRead` | per ACL (default deny for private data) | allowed | allowed |
+| `CanWrite` | denied | allowed | allowed |
 
 A disallowed request → `403 forbidden`.
 
@@ -57,13 +56,15 @@ A disallowed request → `403 forbidden`.
 |:-------|:-----|:----|:--------|:------|
 | `GET` | `/solid/<path>` | `CanRead` | `200` + body | Resource bytes; `Content-Type` from storage. |
 | `GET` | `/solid/<path>/` | `CanRead` | `200` + Turtle | **Container** (trailing slash): lists children as Turtle with `Link: <...#BasicContainer>; rel="type"`. |
+| `HEAD` | `/solid/<path>` | `CanRead` | `200` | Headers only, no body. |
+| `OPTIONS` | `/solid/<path>` | — | `204` | Advertises `Allow` (incl. `PATCH`) and `Accept-Patch`. |
 | `PUT` | `/solid/<path>` | `CanWrite` | `201` | Store/replace a resource. |
 | `POST` | `/solid/<path>` | `CanWrite` | `201` | Create a child resource. |
+| `PATCH` | `/solid/<path>` | `CanWrite` | `204` | Apply a SPARQL-update `INSERT DATA`/`DELETE DATA` patch to an RDF resource. |
 | `DELETE` | `/solid/<path>` | `CanWrite` | `204` | Delete a resource. Missing → `404`. |
 
 Other methods → `405`. The `Allow` header advertises
-`GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE`, but `PATCH`, `HEAD`, and
-`OPTIONS` are **not** handled and return `405`.
+`GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE`, all of which are now handled.
 
 ## Containers and slash semantics
 
@@ -95,7 +96,8 @@ curl https://alice.example.com/solid/documents/ \
 
 ## Known gaps (tracked)
 
-* No `PATCH` (advertised but `405`).
+* No live notifications.
 * No WebID profile document route on this prefix (see `/profile/`).
-* No WAC rule documents; ACL is ownership-only.
+* PATCH supports the SPARQL-update `INSERT DATA`/`DELETE DATA` subset (no
+  `WHERE` clauses, graph patterns, `FILTER`, or blank nodes).
 * No live Solid notifications.

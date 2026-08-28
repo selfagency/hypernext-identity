@@ -2,6 +2,7 @@ package remotestorage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -229,6 +230,106 @@ func TestDeleteMissing(t *testing.T) {
 func TestErrNoToken(t *testing.T) {
 	if errNoToken.Error() != "no bearer token" {
 		t.Fatalf("errNoToken = %q, want 'no bearer token'", errNoToken.Error())
+	}
+}
+
+// seed stores content at key and returns its ETag.
+func seed(t *testing.T, h http.Handler, key, body string) string {
+	t.Helper()
+	req := httptest.NewRequest("PUT", "/"+key, strings.NewReader(body))
+	req.Host = "alice.example.com"
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed PUT %s = %d, want 200", key, rec.Code)
+	}
+	return rec.Header().Get("ETag")
+}
+
+// TestPutIfMatchMismatchReturns412 proves write preconditions are enforced.
+func TestPutIfMatchMismatchReturns412(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+	seed(t, h, "docs/a.txt", "v1")
+
+	req := httptest.NewRequest("PUT", "/docs/a.txt", strings.NewReader("v2"))
+	req.Host = "alice.example.com"
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("If-Match", `"deadbeef"`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("PUT If-Match mismatch = %d, want 412", rec.Code)
+	}
+}
+
+// TestPutIfNoneMatchStarOnExistingReturns412 proves create-only semantics.
+func TestPutIfNoneMatchStarOnExistingReturns412(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+	seed(t, h, "docs/a.txt", "v1")
+
+	req := httptest.NewRequest("PUT", "/docs/a.txt", strings.NewReader("v2"))
+	req.Host = "alice.example.com"
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("If-None-Match", "*")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("PUT If-None-Match:* on existing = %d, want 412", rec.Code)
+	}
+}
+
+// TestGetIfNoneMatchReturns304 proves cache revalidation.
+func TestGetIfNoneMatchReturns304(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+	et := seed(t, h, "docs/a.txt", "hello")
+	if et == "" {
+		t.Fatal("seed must emit ETag for conditionals to work")
+	}
+
+	req := httptest.NewRequest("GET", "/docs/a.txt", http.NoBody)
+	req.Host = "alice.example.com"
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("If-None-Match", et)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("GET If-None-Match hit = %d, want 304", rec.Code)
+	}
+}
+
+// TestGetFolderReturnsListing proves folder listing works.
+func TestGetFolderReturnsListing(t *testing.T) {
+	srv, _ := newTestServer(t, map[string][]string{"tok": {"rw"}})
+	h := withTenant(srv, "alice.example.com")
+	seed(t, h, "docs/a.txt", "1")
+	seed(t, h, "docs/b.txt", "2")
+
+	req := httptest.NewRequest("GET", "/docs/", http.NoBody)
+	req.Host = "alice.example.com"
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET folder = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/ld+json") {
+		t.Fatalf("folder Content-Type = %q, want application/ld+json", ct)
+	}
+	var folder struct {
+		Items map[string]struct {
+			ETag string `json:"ETag"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&folder); err != nil {
+		t.Fatalf("decode folder: %v", err)
+	}
+	if len(folder.Items) != 2 {
+		t.Fatalf("folder items = %d, want 2", len(folder.Items))
 	}
 }
 

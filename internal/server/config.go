@@ -23,6 +23,7 @@ type Config struct {
 	IPFS         IPFSConfig    `yaml:"ipfs" mapstructure:"ipfs"`
 	Atproto      AtprotoConfig `yaml:"atproto" mapstructure:"atproto"`
 	Backup       BackupConfig  `yaml:"backup" mapstructure:"backup"`
+	SMTP         SMTPConfig    `yaml:"smtp" mapstructure:"smtp"`
 	Log          LogConfig     `yaml:"log" mapstructure:"log"`
 }
 
@@ -68,6 +69,21 @@ type AtprotoConfig struct {
 // BackupConfig configures scheduled backups.
 type BackupConfig struct {
 	CronExpr string `yaml:"cron_expr" mapstructure:"cron_expr"`
+}
+
+// SMTPConfig configures outbound email via stdlib net/smtp.
+type SMTPConfig struct {
+	Host     string `yaml:"host" mapstructure:"host"`
+	Port     int    `yaml:"port" mapstructure:"port"`
+	Username string `yaml:"username" mapstructure:"username"`
+	Password string `yaml:"password" mapstructure:"password"`
+	From     string `yaml:"from" mapstructure:"from"`
+	TLS      bool   `yaml:"tls" mapstructure:"tls"` // STARTTLS
+}
+
+// Enabled reports whether SMTP is configured for sending.
+func (s *SMTPConfig) Enabled() bool {
+	return s.Host != "" && s.Port != 0
 }
 
 // LogConfig configures logging.

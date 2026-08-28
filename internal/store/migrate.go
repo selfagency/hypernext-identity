@@ -23,6 +23,7 @@ var migrations = []migration{
 	{version: 1, name: "initial_schema", up: migrateV1},
 	{version: 2, name: "accounts_table", up: migrateV2},
 	{version: 3, name: "auth_tables", up: migrateV3},
+	{version: 4, name: "invites_and_user_state", up: migrateV4},
 }
 
 // migrate runs all pending migrations inside transactions and records each
@@ -235,6 +236,36 @@ func migrateV3(ctx context.Context, tx *sql.Tx) error {
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS ipfs_pins (
+			cid        TEXT PRIMARY KEY,
+			status     TEXT NOT NULL DEFAULT 'pinned',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateV4 adds user onboarding state (email, ToS acceptance, passkey setup)
+// and the invite-token table used for admin-issued magic links.
+func migrateV4(ctx context.Context, tx *sql.Tx) error {
+	stmts := []string{
+		`ALTER TABLE users ADD COLUMN email TEXT`,
+		`ALTER TABLE users ADD COLUMN tos_accepted BOOLEAN NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN passkey_setup BOOLEAN NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS invite_tokens (
+			id         TEXT PRIMARY KEY,
+			token_hash TEXT NOT NULL UNIQUE,
+			user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			expires_at TIMESTAMP NOT NULL,
+			used_at    TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_invite_user ON invite_tokens(user_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
