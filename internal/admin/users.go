@@ -56,7 +56,8 @@ func (h *UserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Email:       email,
 	}
 	if err := h.Store.CreateUser(r.Context(), u); err != nil {
-		http.Error(w, "create user: "+err.Error(), http.StatusBadRequest)
+		// Don't echo the store error (may contain user data / internals).
+		http.Error(w, "create user failed", http.StatusBadRequest)
 		return
 	}
 
@@ -69,7 +70,7 @@ func (h *UserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: time.Now().Add(inviteTTL),
 	}
 	if err := h.Store.CreateInviteToken(r.Context(), it); err != nil {
-		http.Error(w, "create invite: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "create invite failed", http.StatusInternalServerError)
 		return
 	}
 

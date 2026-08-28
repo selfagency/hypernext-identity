@@ -12,6 +12,14 @@ import (
 	"github.com/selfagency/sovereign/internal/store"
 )
 
+// must fails the test if err is non-nil.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestInviteFlowE2E verifies the full onboarding loop: admin creates a user,
 // the magic link is logged, and redeeming it sets a session cookie and
 // redirects to the panel.
@@ -20,13 +28,9 @@ func TestInviteFlowE2E(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed an admin and mint a token.
-	if err := ts.srv.store.CreateUser(ctx, &store.User{ID: "admin1", TenantID: "identity", Handle: "root"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, ts.srv.store.CreateUser(ctx, &store.User{ID: "admin1", TenantID: "identity", Handle: "root"}))
 	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), "admin1", []string{"admin"}, auth.AccessTokenTTL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 
 	// Admin creates a user.
 	form := url.Values{"email": {"alice@example.com"}, "handle": {"alice"}}
@@ -38,27 +42,19 @@ func TestInviteFlowE2E(t *testing.T) {
 	// The dev LogSender logs the magic link; we can't capture it here, so
 	// instead verify the invite token exists for the user (hashed).
 	u, err := ts.srv.store.UserByHandle(ctx, "identity", "alice")
-	if err != nil {
-		t.Fatalf("UserByHandle: %v", err)
-	}
+	must(t, err)
 	// Redeem a fresh invite token directly to exercise the /invite/ route.
 	raw := "e2erawtoken"
-	if err := ts.srv.store.CreateInviteToken(ctx, &store.InviteToken{
+	must(t, ts.srv.store.CreateInviteToken(ctx, &store.InviteToken{
 		ID: "inv-e2e", TokenHash: hashToken(raw), UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	// Redeem the magic link (no-redirect client so we can inspect the 302).
 	req, err := http.NewRequest(http.MethodGet, ts.baseURL+"/invite/"+raw, http.NoBody)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	req.Host = "id.example.com"
 	resp, err := noRedirectClient().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("invite status = %d, want 302", resp.StatusCode)

@@ -287,7 +287,7 @@ func (s *Server) buildRouter() {
 		userHandler := &admin.UserHandler{Store: s.store, Sender: s.mailer, BaseURL: "https://" + identityHost}
 		identity.Handle("/admin/users", adminGuard.Middleware(userHandler))
 		// Magic-link redemption (public, no admin guard).
-		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial(), "https://"+identityHost))
+		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial()))
 		// User panel (first-login ToS + passkey + profile).
 		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial()))
 		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial()))

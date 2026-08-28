@@ -41,6 +41,11 @@ func seedPanelUser(t *testing.T, st *store.Store, key *rsa.PrivateKey, tos, pass
 	return tok, u
 }
 
+// sessionCookieValue returns a session cookie with the security flags set.
+func sessionCookieValue(tok string) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: tok, HttpOnly: true, Secure: true, Path: "/"}
+}
+
 // TestPanelForcesToS verifies a user who hasn't accepted ToS is shown the ToS
 // form, not the profile.
 func TestPanelForcesToS(t *testing.T) {
@@ -50,7 +55,7 @@ func TestPanelForcesToS(t *testing.T) {
 	h := panelHandler(st, key)
 
 	req := httptest.NewRequest("GET", "/panel", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	req.AddCookie(sessionCookieValue(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -74,7 +79,7 @@ func TestPanelForcesPasskey(t *testing.T) {
 	h := panelHandler(st, key)
 
 	req := httptest.NewRequest("GET", "/panel", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	req.AddCookie(sessionCookieValue(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -94,7 +99,7 @@ func TestPanelShowsProfile(t *testing.T) {
 	h := panelHandler(st, key)
 
 	req := httptest.NewRequest("GET", "/panel", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	req.AddCookie(sessionCookieValue(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -128,7 +133,7 @@ func TestPanelAcceptToS(t *testing.T) {
 	form := url.Values{"accept": {"1"}}
 	req := httptest.NewRequest("POST", "/panel/tos", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	req.AddCookie(sessionCookieValue(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -151,7 +156,7 @@ func TestPanelSaveProfile(t *testing.T) {
 	form := url.Values{"display_name": {"Alice Updated"}, "bio": {"Hello"}}
 	req := httptest.NewRequest("POST", "/panel/profile", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	req.AddCookie(sessionCookieValue(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -176,7 +181,7 @@ func TestPanelCompletePasskey(t *testing.T) {
 	h := panelHandler(st, key)
 
 	req := httptest.NewRequest("POST", "/panel/passkey", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	req.AddCookie(sessionCookieValue(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -199,5 +204,58 @@ func TestPanelPasskeyRequiresAuth(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// TestPanelEndpointsRejectWrongMethod verifies the panel POST endpoints reject
+// non-POST requests.
+func TestPanelEndpointsRejectWrongMethod(t *testing.T) {
+	st := newTestStore(t)
+	key := testRSAKey(t)
+	tok, _ := seedPanelUser(t, st, key, true, true)
+	h := panelHandler(st, key)
+
+	for _, path := range []string{"/panel/tos", "/panel/passkey", "/panel/profile"} {
+		req := httptest.NewRequest("GET", path, http.NoBody)
+		req.AddCookie(sessionCookieValue(tok))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s GET = %d, want 405", path, rec.Code)
+		}
+	}
+}
+
+// TestPanelEndpointsRequireAuth verifies the panel POST endpoints reject a
+// missing session.
+func TestPanelEndpointsRequireAuth(t *testing.T) {
+	st := newTestStore(t)
+	h := panelHandler(st, testRSAKey(t))
+
+	for _, path := range []string{"/panel/tos", "/panel/passkey", "/panel/profile"} {
+		req := httptest.NewRequest("POST", path, http.NoBody)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s = %d, want 401", path, rec.Code)
+		}
+	}
+}
+
+// TestPanelProfileBadForm verifies POST /panel/profile rejects a malformed
+// form body.
+func TestPanelProfileBadForm(t *testing.T) {
+	st := newTestStore(t)
+	key := testRSAKey(t)
+	tok, _ := seedPanelUser(t, st, key, true, true)
+	h := panelHandler(st, key)
+
+	req := httptest.NewRequest("POST", "/panel/profile", strings.NewReader("%zz"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookieValue(tok))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }

@@ -20,13 +20,9 @@ func TestFirstLoginFlowE2E(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed an admin and mint a token.
-	if err := ts.srv.store.CreateUser(ctx, &store.User{ID: "admin1", TenantID: "identity", Handle: "root"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, ts.srv.store.CreateUser(ctx, &store.User{ID: "admin1", TenantID: "identity", Handle: "root"}))
 	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), "admin1", []string{"admin"}, auth.AccessTokenTTL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 
 	// Admin creates a user.
 	form := url.Values{"email": {"alice@example.com"}, "handle": {"alice"}}
@@ -35,24 +31,19 @@ func TestFirstLoginFlowE2E(t *testing.T) {
 		t.Fatalf("create user = %d, want 201", status)
 	}
 	u, err := ts.srv.store.UserByHandle(ctx, "identity", "alice")
-	if err != nil {
-		t.Fatalf("UserByHandle: %v", err)
-	}
+	must(t, err)
 
 	// Redeem a fresh invite token to get a session cookie.
 	raw := "e2efirstlogin"
-	if err := ts.srv.store.CreateInviteToken(ctx, &store.InviteToken{
+	must(t, ts.srv.store.CreateInviteToken(ctx, &store.InviteToken{
 		ID: "inv-e2e", TokenHash: hashToken(raw), UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 	client := noRedirectClient()
-	req, _ := http.NewRequest(http.MethodGet, ts.baseURL+"/invite/"+raw, http.NoBody)
+	req, err := http.NewRequest(http.MethodGet, ts.baseURL+"/invite/"+raw, http.NoBody)
+	must(t, err)
 	req.Host = "id.example.com"
 	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("invite = %d, want 302", resp.StatusCode)
@@ -68,13 +59,12 @@ func TestFirstLoginFlowE2E(t *testing.T) {
 	}
 
 	// Panel forces ToS.
-	panelReq, _ := http.NewRequest(http.MethodGet, ts.baseURL+"/panel", http.NoBody)
+	panelReq, err := http.NewRequest(http.MethodGet, ts.baseURL+"/panel", http.NoBody)
+	must(t, err)
 	panelReq.Host = "id.example.com"
 	panelReq.AddCookie(session)
 	panelResp, err := client.Do(panelReq)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer func() { _ = panelResp.Body.Close() }()
 	panelBody := readBody(t, panelResp)
 	if !strings.Contains(panelBody, "Terms of Service") {
@@ -83,27 +73,25 @@ func TestFirstLoginFlowE2E(t *testing.T) {
 
 	// Accept ToS.
 	tosForm := url.Values{"accept": {"1"}}
-	tosReq, _ := http.NewRequest(http.MethodPost, ts.baseURL+"/panel/tos", strings.NewReader(tosForm.Encode()))
+	tosReq, err := http.NewRequest(http.MethodPost, ts.baseURL+"/panel/tos", strings.NewReader(tosForm.Encode()))
+	must(t, err)
 	tosReq.Host = "id.example.com"
 	tosReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tosReq.AddCookie(session)
 	tosResp, err := client.Do(tosReq)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	_ = tosResp.Body.Close()
 	if tosResp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("accept tos = %d, want 303", tosResp.StatusCode)
 	}
 
 	// Panel now shows passkey setup (no passkey yet).
-	panelReq2, _ := http.NewRequest(http.MethodGet, ts.baseURL+"/panel", http.NoBody)
+	panelReq2, err := http.NewRequest(http.MethodGet, ts.baseURL+"/panel", http.NoBody)
+	must(t, err)
 	panelReq2.Host = "id.example.com"
 	panelReq2.AddCookie(session)
 	panelResp2, err := client.Do(panelReq2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	defer func() { _ = panelResp2.Body.Close() }()
 	panelBody2 := readBody(t, panelResp2)
 	if !strings.Contains(panelBody2, "passkey") {

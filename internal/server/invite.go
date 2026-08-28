@@ -22,7 +22,7 @@ const sessionTTL = 15 * time.Minute
 // inviteHandler validates a one-time magic-link token, marks it used, mints a
 // short-lived session access token (subject = user ID), sets it as an HttpOnly
 // cookie, and redirects to the user panel.
-func inviteHandler(st *store.Store, key *rsa.PrivateKey, baseURL string) http.Handler {
+func inviteHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := strings.TrimPrefix(r.URL.Path, "/invite/")
 		if raw == "" {
@@ -53,15 +53,16 @@ func inviteHandler(st *store.Store, key *rsa.PrivateKey, baseURL string) http.Ha
 			http.Error(w, "mint session: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// #nosec G124 -- Secure is set from baseURL (https in production);
-		// HttpOnly and SameSite are always on. The cookie carries a short-lived
-		// signed session token, not a long-lived credential.
+		// The identity host is always served over HTTPS, so the session cookie
+		// is always Secure. HttpOnly and SameSite are always on. The cookie
+		// carries a short-lived signed session token, not a long-lived
+		// credential.
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookie,
 			Value:    tok,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   strings.HasPrefix(baseURL, "https://"),
+			Secure:   true,
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   int(sessionTTL.Seconds()),
 		})

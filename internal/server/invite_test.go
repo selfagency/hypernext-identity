@@ -51,7 +51,7 @@ func TestInviteValidToken(t *testing.T) {
 	seedInviteUser(t, st, raw)
 	key := testRSAKey(t)
 
-	h := inviteHandler(st, key, "https://id.example.com")
+	h := inviteHandler(st, key)
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -80,12 +80,24 @@ func TestInviteValidToken(t *testing.T) {
 // TestInviteUnknownToken verifies an unknown token returns 404.
 func TestInviteUnknownToken(t *testing.T) {
 	st := newTestStore(t)
-	h := inviteHandler(st, testRSAKey(t), "https://id.example.com")
+	h := inviteHandler(st, testRSAKey(t))
 	req := httptest.NewRequest("GET", "/invite/unknown", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestInviteMissingToken verifies an empty token returns 400.
+func TestInviteMissingToken(t *testing.T) {
+	st := newTestStore(t)
+	h := inviteHandler(st, testRSAKey(t))
+	req := httptest.NewRequest("GET", "/invite/", http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
 
@@ -106,7 +118,7 @@ func TestInviteExpiredToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := inviteHandler(st, testRSAKey(t), "https://id.example.com")
+	h := inviteHandler(st, testRSAKey(t))
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -135,7 +147,7 @@ func TestInviteUsedToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := inviteHandler(st, testRSAKey(t), "https://id.example.com")
+	h := inviteHandler(st, testRSAKey(t))
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -152,7 +164,7 @@ func TestInviteSessionCookieValid(t *testing.T) {
 	u := seedInviteUser(t, st, raw)
 	key := testRSAKey(t)
 
-	h := inviteHandler(st, key, "https://id.example.com")
+	h := inviteHandler(st, key)
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
