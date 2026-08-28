@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hypernext/identity/internal/protocols/atproto"
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/protocols/atproto"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // writeConfig writes a test config file.

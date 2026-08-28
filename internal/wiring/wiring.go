@@ -10,11 +10,11 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/protocols/remotestorage"
-	"github.com/hypernext/identity/internal/protocols/solid"
-	"github.com/hypernext/identity/internal/store"
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/protocols/remotestorage"
+	"github.com/selfagency/sovereign/internal/protocols/solid"
+	"github.com/selfagency/sovereign/internal/store"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // TokenValidator validates bearer access tokens against the OIDC signing key.

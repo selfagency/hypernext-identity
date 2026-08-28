@@ -1,4 +1,4 @@
-# Hypernext Identity Server — example configuration
+# Sovereign — example configuration
 # Copy to config.yml and edit. All values shown are defaults.
 
 # Base domain for the identity server (the apex, e.g. example.com).
@@ -19,7 +19,7 @@ storage:
   backend: fs
   # s3:
   #   endpoint: https://s3.example.com
-  #   bucket: hypernext-blobs
+  #   bucket: sovereign-blobs
   #   access_key: ...
   #   secret_key: ...
   #   region: us-east-1

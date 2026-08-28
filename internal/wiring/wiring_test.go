@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/authstore"
-	"github.com/hypernext/identity/internal/protocols/solid"
-	"github.com/hypernext/identity/internal/store"
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/authstore"
+	"github.com/selfagency/sovereign/internal/protocols/solid"
+	"github.com/selfagency/sovereign/internal/store"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // newTestStores opens temp SQLite + auth stores.

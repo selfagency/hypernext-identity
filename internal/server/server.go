@@ -11,31 +11,32 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/authstore"
-	"github.com/hypernext/identity/internal/endpoints"
-	"github.com/hypernext/identity/internal/protocols/activitypub"
-	"github.com/hypernext/identity/internal/protocols/atproto"
-	"github.com/hypernext/identity/internal/protocols/indieauth"
-	"github.com/hypernext/identity/internal/protocols/ipfspin"
-	"github.com/hypernext/identity/internal/protocols/nodeinfo"
-	"github.com/hypernext/identity/internal/protocols/remotestorage"
-	"github.com/hypernext/identity/internal/protocols/solid"
-	"github.com/hypernext/identity/internal/protocols/webfinger"
-	"github.com/hypernext/identity/internal/protocols/wellknown"
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/store"
-	"github.com/hypernext/identity/internal/tenant"
-	"github.com/hypernext/identity/internal/wiring"
+	"github.com/selfagency/sovereign/internal/admin"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/endpoints"
+	"github.com/selfagency/sovereign/internal/moderation"
+	"github.com/selfagency/sovereign/internal/protocols/activitypub"
+	"github.com/selfagency/sovereign/internal/protocols/atproto"
+	"github.com/selfagency/sovereign/internal/protocols/ipfspin"
+	"github.com/selfagency/sovereign/internal/protocols/nodeinfo"
+	"github.com/selfagency/sovereign/internal/protocols/remotestorage"
+	"github.com/selfagency/sovereign/internal/protocols/solid"
+	"github.com/selfagency/sovereign/internal/protocols/webfinger"
+	"github.com/selfagency/sovereign/internal/protocols/wellknown"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/store"
+	"github.com/selfagency/sovereign/internal/tenant"
+	"github.com/selfagency/sovereign/internal/wiring"
 )
 
 // Server is the assembled identity server.
 type Server struct {
 	cfg       *Config
 	store     *store.Store
-	authStore *authstore.Store
+	authStore *auth.SQLStore
 	blobs     storage.Backend
 	mux       http.Handler
 	logger    *slog.Logger
@@ -58,12 +59,16 @@ func New(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
-	// Build the auth store (persists the OIDC signing key + refresh tokens).
-	mem, err := auth.NewMemoryStore()
-	if err != nil {
-		return nil, fmt.Errorf("new auth store: %w", err)
+	// Seed the identity host as a tenant so the tenant middleware resolves
+	// it and the OIDC provider can be mounted there.
+	identityHost := "id." + cfg.Domain
+	if err := seedIdentityTenant(context.Background(), st, identityHost); err != nil {
+		return nil, fmt.Errorf("seed identity tenant: %w", err)
 	}
-	authStore, err := authstore.New(context.Background(), mem, st)
+
+	// Build the SQLite-backed OIDC storage (users, clients, signing key,
+	// refresh tokens).
+	authStore, err := auth.NewSQLStore(context.Background(), st)
 	if err != nil {
 		return nil, fmt.Errorf("open auth store: %w", err)
 	}
@@ -77,6 +82,24 @@ func New(cfg *Config) (*Server, error) {
 	s := &Server{cfg: cfg, store: st, authStore: authStore, blobs: blobs, logger: logger}
 	s.buildRouter()
 	return s, nil
+}
+
+// seedIdentityTenant ensures the identity host (id.<domain>) exists as a
+// tenant row so the tenant middleware resolves it. It is idempotent.
+func seedIdentityTenant(ctx context.Context, st *store.Store, host string) error {
+	_, err := st.GetTenantByHandle(ctx, host)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return st.CreateTenant(ctx, &store.Tenant{
+		ID:        "identity",
+		Handle:    host,
+		DIDMethod: "web",
+		DID:       "did:web:" + host,
+	})
 }
 
 // Close releases the store.
@@ -112,7 +135,9 @@ func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error)
 	}
 }
 
-// buildRouter wires all protocol handlers onto the mux.
+// buildRouter wires all protocol handlers onto the mux. The OIDC provider is
+// served only on the identity host (id.<domain>); all other hosts serve the
+// protocol mux.
 func (s *Server) buildRouter() {
 	mux := http.NewServeMux()
 
@@ -126,7 +151,7 @@ func (s *Server) buildRouter() {
 	// remoteStorage.
 	rs := &remotestorage.Server{
 		Backend: backendFor,
-		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKey()},
+		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKeyMaterial()},
 	}
 	mux.Handle("/rs/", rs)
 
@@ -134,7 +159,7 @@ func (s *Server) buildRouter() {
 	solidSrv := &solid.Server{
 		Backend: backendFor,
 		ACL:     &wiring.ACLChecker{Store: s.store},
-		Tokens:  &wiring.SubjectValidator{Key: s.authStore.SigningKey()},
+		Tokens:  &wiring.SubjectValidator{Key: s.authStore.SigningKeyMaterial()},
 	}
 	mux.Handle("/solid/", solidSrv)
 
@@ -149,7 +174,7 @@ func (s *Server) buildRouter() {
 
 	// NodeInfo.
 	ni := nodeinfo.Handler(nodeinfo.Config{
-		SoftwareName:      "hypernext-identity",
+		SoftwareName:      "sovereign",
 		SoftwareVersion:   "0.1.0",
 		Protocols:         []string{"solid", "remotestorage", "atproto"},
 		OpenRegistrations: false,
@@ -181,12 +206,88 @@ func (s *Server) buildRouter() {
 	xrpc := &atproto.XRPCServer{Store: s.store}
 	mux.Handle("/xrpc/", xrpc)
 
-	// IndieAuth.
-	bridge := indieauth.NewBridge(true, nil)
-	_ = bridge
+	// OIDC provider, served only on the identity host.
+	issuer := "https://" + identityHost
+	provider, err := auth.NewProvider(issuer, s.authStore)
+	if err != nil {
+		s.logger.Error("oidc provider init failed", "err", err)
+	}
+
+	// WebAuthn passkey endpoints, served on the identity host.
+	waHandler, err := auth.NewWebAuthnHandler(identityHost, "Sovereign", "https://"+identityHost, s.store)
+	if err != nil {
+		s.logger.Error("webauthn init failed", "err", err)
+	}
+
+	// Admin guard: validates a bearer access token and requires the subject
+	// to be an instance admin. Protects the admin backup + moderation routes.
+	adminGuard := &wiring.AdminGuard{Key: s.authStore.SigningKeyMaterial(), Store: s.store}
+
+	// Admin backup config (GET form / POST apply).
+	backupHandler := &admin.BackupHandler{
+		Apply: func(cfg admin.BackupConfig) error {
+			if err := admin.ValidateBackupConfig(cfg); err != nil {
+				return err
+			}
+			s.logger.Info("backup config applied", "schedule", cfg.Schedule, "destination", cfg.Destination, "prefix", cfg.Prefix)
+			return nil
+		},
+	}
+
+	// Admin moderation takedown with a persistent audit log.
+	takedown := &moderation.TakedownHandler{
+		Backend: backendFor,
+		Log:     moderation.NewStoreAuditLog(s.store),
+		AdminAuthorizer: func(r *http.Request) bool {
+			return adminGuard.Authorize(r)
+		},
+	}
+
+	// IndieAuth is a separate phase; the bridge is not wired yet.
+
+	// Host-based dispatch: the identity host serves the OIDC provider and
+	// WebAuthn endpoints; every other host serves the protocol mux.
+	var root http.Handler = mux
+	if provider != nil || waHandler != nil {
+		identity := http.NewServeMux()
+		if provider != nil {
+			identity.Handle("/", provider.Handler())
+		}
+		if waHandler != nil {
+			identity.Handle("/webauthn/register/begin", http.HandlerFunc(waHandler.RegisterBegin))
+			identity.Handle("/webauthn/register/finish", http.HandlerFunc(waHandler.RegisterFinish))
+			identity.Handle("/webauthn/login/begin", http.HandlerFunc(waHandler.LoginBegin))
+			identity.Handle("/webauthn/login/finish", http.HandlerFunc(waHandler.LoginFinish))
+		}
+		// Admin routes on the identity host, behind the admin guard.
+		identity.Handle("/admin/backup", adminGuard.Middleware(backupHandler))
+		identity.Handle("/admin/moderation/takedown", adminGuard.Middleware(takedown))
+		root = hostRouter{
+			identityHost: identityHost,
+			identity:     identity,
+			other:        mux,
+		}
+	}
 
 	// Tenant middleware wraps the whole mux.
-	s.mux = tenant.Middleware(s.tenantStore())(mux)
+	s.mux = tenant.Middleware(s.tenantStore())(root)
+}
+
+// hostRouter dispatches to the identity handler on the identity host and the
+// protocol mux on every other host.
+type hostRouter struct {
+	identityHost string
+	identity     http.Handler
+	other        http.Handler
+}
+
+func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	host := strings.Split(r.Host, ":")[0]
+	if host == h.identityHost {
+		h.identity.ServeHTTP(w, r)
+		return
+	}
+	h.other.ServeHTTP(w, r)
 }
 
 // tenantStore resolves a host to a tenant from the SQLite store.

@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // Store wraps the in-memory auth store with SQLite persistence for the

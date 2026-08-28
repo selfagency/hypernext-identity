@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hypernext/identity/internal/storage"
+	"github.com/selfagency/sovereign/internal/storage"
 )
 
 // TestSchedulerStart verifies a valid schedule starts and runs a backup.

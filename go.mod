@@ -1,4 +1,4 @@
-module github.com/hypernext/identity
+module github.com/selfagency/sovereign
 
 go 1.27.0
 

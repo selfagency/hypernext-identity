@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // Actor is a minimal ActivityPub Person actor document.

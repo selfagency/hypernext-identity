@@ -97,7 +97,7 @@ func TestConfigPrecedence(t *testing.T) {
 	}
 
 	// Case 2: env var beats config file.
-	t.Setenv("HYPERNEXT_ADDR", ":7000")
+	t.Setenv("SOVEREIGN_ADDR", ":7000")
 	v2 := viper.New()
 	v2.Set("config", cfgPath)
 	if err := initConfig(rootCmd, v2); err != nil {

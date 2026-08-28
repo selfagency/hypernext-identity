@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // testKey generates an RSA key and returns the PEM public key + private key.

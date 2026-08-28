@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"io"
 
-	"github.com/hypernext/identity/internal/storage"
+	"github.com/selfagency/sovereign/internal/storage"
 )
 
 // BlobStore stores atproto blobs (images, files) in the shared storage

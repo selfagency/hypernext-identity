@@ -14,4 +14,4 @@ coverage:
 
 # Ignore generated/test scaffolding from coverage accounting.
 ignore:
-  - "cmd/hypernext-identity/main.go"  # 2-line os.Exit bootstrap, untestable in-process
+  - "cmd/sovereign/main.go"  # 2-line os.Exit bootstrap, untestable in-process

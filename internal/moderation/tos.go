@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // ToSStore persists whether a tenant has accepted the Terms of Service.

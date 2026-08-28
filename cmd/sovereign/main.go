@@ -1,4 +1,4 @@
-// Command hypernext-identity is the Hypernext identity and data server.
+// Command sovereign is the Sovereign identity and data server.
 //
 // A single multi-tenant binary serving Solid Pod, remoteStorage, atproto PDS,
 // IPFS pinning, WebFinger, OIDC/OAuth2 + IndieAuth, and an ActivityPub actor.
@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/hypernext/identity/internal/server"
+	"github.com/selfagency/sovereign/internal/server"
 )
 
 // version is the build version, overridable at link time.
@@ -34,9 +34,9 @@ var v *viper.Viper
 
 // rootCmd is the CLI root. It owns Viper configuration via PersistentPreRunE.
 var rootCmd = &cobra.Command{
-	Use:   "hypernext-identity",
-	Short: "Hypernext identity and data server",
-	Long: `Hypernext is a single multi-tenant binary serving Solid Pod, remoteStorage,
+	Use:   "sovereign",
+	Short: "Sovereign identity and data server",
+	Long: `Sovereign is a single multi-tenant binary serving Solid Pod, remoteStorage,
 atproto PDS, IPFS pinning, WebFinger, OIDC/OAuth2 + IndieAuth, and an
 ActivityPub actor.`,
 	// PersistentPreRunE initializes Viper before any subcommand runs. This is
@@ -113,10 +113,10 @@ func init() {
 // flags are bound, then the config file is read. Flags take top precedence
 // (flag > env > config > default).
 func initConfig(cmd *cobra.Command, v *viper.Viper) error {
-	// Environment variables: HYPERNEXT_<KEY> (e.g. HYPERNEXT_ADDR). The key
+	// Environment variables: SOVEREIGN_<KEY> (e.g. SOVEREIGN_ADDR). The key
 	// replacer maps nested config keys (e.g. storage.backend) to env vars
-	// (HYPERNEXT_STORAGE_BACKEND).
-	v.SetEnvPrefix("HYPERNEXT")
+	// (SOVEREIGN_STORAGE_BACKEND).
+	v.SetEnvPrefix("SOVEREIGN")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 
@@ -135,7 +135,7 @@ func initConfig(cmd *cobra.Command, v *viper.Viper) error {
 		return fmt.Errorf("bind persistent flags: %w", err)
 	}
 
-	// Config file: --config flag (now in viper), then HYPERNEXT_CONFIG, then
+	// Config file: --config flag (now in viper), then SOVEREIGN_CONFIG, then
 	// the default config.yml.
 	configPath := v.GetString("config")
 	if configPath != "" {

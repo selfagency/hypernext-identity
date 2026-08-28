@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // Link is a single WebFinger link relation (RFC 7033 §4.4.4).

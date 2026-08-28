@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/hypernext/identity/internal/storage"
+	"github.com/selfagency/sovereign/internal/storage"
 )
 
 // TestBlobStoreRoundTrip verifies blob put/get/delete.

@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hypernext/identity/internal/storage"
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/storage"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // AuditEntry records a moderation action.

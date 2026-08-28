@@ -22,6 +22,7 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, name: "initial_schema", up: migrateV1},
 	{version: 2, name: "accounts_table", up: migrateV2},
+	{version: 3, name: "auth_tables", up: migrateV3},
 }
 
 // migrate runs all pending migrations inside transactions and records each
@@ -188,4 +189,57 @@ func migrateV2(ctx context.Context, tx *sql.Tx) error {
 	}
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_accounts_tenant ON accounts(tenant_id)`)
 	return err
+}
+
+// migrateV3 creates the auth tables: users (OIDC/WebAuthn subjects with an
+// admin flag), OIDC clients, WebAuthn credentials, and the persistent audit
+// log. The first user created is the instance admin (enforced in store code,
+// not here).
+func migrateV3(ctx context.Context, tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id           TEXT PRIMARY KEY,
+			tenant_id    TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			handle       TEXT NOT NULL,
+			display_name TEXT,
+			is_admin     BOOLEAN NOT NULL DEFAULT 0,
+			created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(tenant_id, handle)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id)`,
+		`CREATE TABLE IF NOT EXISTS clients (
+			id            TEXT PRIMARY KEY,
+			secret        TEXT NOT NULL,
+			redirect_uris TEXT NOT NULL,
+			scopes        TEXT NOT NULL,
+			created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS webauthn_credentials (
+			id            TEXT PRIMARY KEY,
+			user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			credential_id BLOB NOT NULL,
+			public_key    BLOB NOT NULL,
+			sign_count    INTEGER NOT NULL DEFAULT 0,
+			data          BLOB NOT NULL,
+			created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, credential_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_credentials(user_id)`,
+		`CREATE TABLE IF NOT EXISTS audit_log (
+			id         TEXT PRIMARY KEY,
+			tenant_id  TEXT NOT NULL,
+			actor      TEXT NOT NULL,
+			action     TEXT NOT NULL,
+			target     TEXT,
+			detail     TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, created_at)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }

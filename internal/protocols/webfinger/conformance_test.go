@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/hypernext/identity/internal/tenant"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // TestSpecConformanceJRD verifies the WebFinger response matches the RFC 7033

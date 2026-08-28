@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hypernext/identity/internal/auth"
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // newTestStore opens a temp SQLite store.

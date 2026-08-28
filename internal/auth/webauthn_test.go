@@ -10,7 +10,7 @@ import (
 
 // TestNewWebAuthn validates config and builds a relying party.
 func TestNewWebAuthn(t *testing.T) {
-	wa, err := NewWebAuthn("id.example.com", "Hypernext Identity", "https://id.example.com")
+	wa, err := NewWebAuthn("id.example.com", "Sovereign", "https://id.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

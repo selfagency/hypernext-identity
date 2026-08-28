@@ -70,8 +70,7 @@ func (w *webauthnUser) WebAuthnID() []byte          { return []byte(w.u.ID) }
 func (w *webauthnUser) WebAuthnName() string        { return w.u.Handle }
 func (w *webauthnUser) WebAuthnDisplayName() string { return w.u.DisplayName }
 func (w *webauthnUser) WebAuthnCredentials() []webauthn.Credential {
-	// The storage phase wires real credentials; for now return none.
-	return nil
+	return w.u.Credentials
 }
 
 // SessionCodec serializes/deserializes WebAuthn sessions for cookie storage.

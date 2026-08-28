@@ -47,6 +47,12 @@ linters:
         linters:
           - revive
           - gocritic
+      # auth/sqlstore.go is the SQLite-backed op.Storage; same rationale as
+      # storage.go — every method is interface-required and exported.
+      - path: internal/auth/sqlstore\.go
+        linters:
+          - revive
+          - gocritic
       # store.go chmods the data directory to 0700 (owner-only). G302 expects
       # <=0600, but directories need the execute bit to be traversable; 0700
       # is the correct owner-only directory mode.
@@ -63,4 +69,4 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/hypernext/identity)
+        - prefix(github.com/selfagency/sovereign)

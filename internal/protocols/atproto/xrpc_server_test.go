@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hypernext/identity/internal/store"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // newTestStore opens a temp SQLite store.
