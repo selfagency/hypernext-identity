@@ -5,6 +5,8 @@
 exclude_paths:
   - "AGENTS.md"
   - "AGENTS.original.md"
+  # Vendored Hugo Geekdoc theme: third-party JS/CSS/HTML, not project code.
+  - "docs/site/themes/**"
 
 # Per-tool configuration. gosec flags the WKD z-base-32 hash (SHA-1) as
 # insecure, but SHA-1 is mandated by the WKD spec for the localpart hash and
