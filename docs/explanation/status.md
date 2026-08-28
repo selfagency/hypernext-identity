@@ -34,6 +34,9 @@ live route or backing test. If you update one, update the other.
 | Accounts & migrations | **Shipped** | `internal/store` | Versioned SQLite migrations; accounts table. |
 | OIDC provider | **Shipped** | identity host `id.<domain>` | Discovery/authorize/token/userinfo/jwks served on the identity host, backed by a SQLite `op.Storage`. |
 | WebAuthn / passkeys | **Shipped** | identity host `/webauthn/register|login/{begin,finish}` | Store-backed credentials; begin/finish register+login with a TTL session store. |
+| Admin user creation + magic-link invites | **Shipped** | identity host `/admin/users` | Admin creates a user with an email; a one-time magic-link invite is emailed (raw token emailed, SHA-256 hash persisted). |
+| Magic-link redemption | **Shipped** | identity host `/invite/{token}` | Validates the one-time token (TTL, single-use), marks it used, mints a short-lived session cookie, redirects to the user panel. |
+| User panel (first-login) | **Shipped** | identity host `/panel` | Forces ToS acceptance, then passkey setup, then profile config. Server-rendered stdlib templates (smolweb subset, simple.css). |
 
 > **Sign-in flow:** OIDC and WebAuthn are now mounted on the identity host,
 > so a browser-based sign-in flow is reachable. The first user created is the
@@ -99,6 +102,9 @@ endpoints are also mounted:
 /webauthn/register|login/{begin,finish}
 /admin/backup
 /admin/moderation/takedown
+/admin/users
+/invite/
+/panel
 ```
 
 Anything not on these lists is not reachable over HTTP, regardless of whether
