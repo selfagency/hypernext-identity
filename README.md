@@ -39,7 +39,7 @@ systems or cryptography expert.
 | Admin backup + moderation | **Shipped** | identity host `/admin/backup`, `/admin/moderation/takedown` (admin-guarded) |
 | Backup / restore | **Shipped** | `internal/backup` — scheduled backups + restore |
 | IndieAuth | **Shipped** | identity host `/indieauth/auth`, `/indieauth/token` |
-| IPFS pinning (optional broker) | Planned | `internal/protocols/ipfspin` |
+| IPFS pinning (optional broker) | **Shipped** | identity host `/ipfs/pin` (admin-guarded) |
 
 Legend — **Shipped**: live route + tests in CI. **Partial**: a named subset
 works and is tested; the gap is stated. **Planned**: designed, not built.

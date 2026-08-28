@@ -72,7 +72,7 @@ store — they do **not** resolve a per-tenant store.
 | Backup / restore | **Shipped** | `internal/backup` | Scheduled backups + a restore path (ReadBackup + Scheduler.Restore). |
 | Moderation (takedown) | **Shipped** | `/admin/moderation/takedown` | Takedown handler + persistent audit log, mounted behind the admin guard. |
 | IndieAuth | **Shipped** | identity host `/indieauth/auth`, `/indieauth/token` | Authorization + token exchange wired; mints tokens for an identity URL via the shared OIDC signing key. |
-| IPFS pinning (broker) | Planned | `internal/protocols/ipfspin` | Optional client only; no embedded node, no standalone endpoint. |
+| IPFS pinning (broker) | **Shipped** | identity host `/ipfs/pin` | Admin-guarded pin/status surface; persists the pin set in the store and calls the configured Kubo RPC backend when `ipfs.enabled`. |
 
 ## Live HTTP surface
 
