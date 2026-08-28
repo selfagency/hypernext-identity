@@ -97,12 +97,15 @@ func (s *Store) DeleteAuthRefreshToken(ctx context.Context, token string) error 
 
 // User is an OIDC/WebAuthn subject that can authenticate and hold passkeys.
 type User struct {
-	ID          string
-	TenantID    string
-	Handle      string
-	DisplayName string
-	IsAdmin     bool
-	CreatedAt   time.Time
+	ID           string
+	TenantID     string
+	Handle       string
+	DisplayName  string
+	Email        string
+	IsAdmin      bool
+	ToSAccepted  bool
+	PasskeySetup bool
+	CreatedAt    time.Time
 }
 
 // Client is an OIDC relying party registered with the provider.
@@ -156,8 +159,8 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 		isAdmin = true
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (id, tenant_id, handle, display_name, is_admin) VALUES (?, ?, ?, ?, ?)`,
-		u.ID, u.TenantID, u.Handle, u.DisplayName, isAdmin)
+		`INSERT INTO users (id, tenant_id, handle, display_name, email, is_admin) VALUES (?, ?, ?, ?, ?, ?)`,
+		u.ID, u.TenantID, u.Handle, u.DisplayName, u.Email, isAdmin)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return ErrDuplicateUser
@@ -171,10 +174,10 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 // UserByHandle returns a user by tenant + handle.
 func (s *Store) UserByHandle(ctx context.Context, tenantID, handle string) (*User, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, handle, display_name, is_admin, created_at FROM users WHERE tenant_id = ? AND handle = ?`,
+		`SELECT id, tenant_id, handle, display_name, email, is_admin, tos_accepted, passkey_setup, created_at FROM users WHERE tenant_id = ? AND handle = ?`,
 		tenantID, handle)
 	var u User
-	err := row.Scan(&u.ID, &u.TenantID, &u.Handle, &u.DisplayName, &u.IsAdmin, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.TenantID, &u.Handle, &u.DisplayName, &u.Email, &u.IsAdmin, &u.ToSAccepted, &u.PasskeySetup, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -184,9 +187,9 @@ func (s *Store) UserByHandle(ctx context.Context, tenantID, handle string) (*Use
 // UserByID returns a user by ID.
 func (s *Store) UserByID(ctx context.Context, id string) (*User, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, handle, display_name, is_admin, created_at FROM users WHERE id = ?`, id)
+		`SELECT id, tenant_id, handle, display_name, email, is_admin, tos_accepted, passkey_setup, created_at FROM users WHERE id = ?`, id)
 	var u User
-	err := row.Scan(&u.ID, &u.TenantID, &u.Handle, &u.DisplayName, &u.IsAdmin, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.TenantID, &u.Handle, &u.DisplayName, &u.Email, &u.IsAdmin, &u.ToSAccepted, &u.PasskeySetup, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -196,7 +199,7 @@ func (s *Store) UserByID(ctx context.Context, id string) (*User, error) {
 // ListUsers returns all users for a tenant.
 func (s *Store) ListUsers(ctx context.Context, tenantID string) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, handle, display_name, is_admin, created_at FROM users WHERE tenant_id = ? ORDER BY created_at`, tenantID)
+		`SELECT id, tenant_id, handle, display_name, email, is_admin, tos_accepted, passkey_setup, created_at FROM users WHERE tenant_id = ? ORDER BY created_at`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list users: %w", err)
 	}
@@ -204,7 +207,7 @@ func (s *Store) ListUsers(ctx context.Context, tenantID string) ([]User, error) 
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.TenantID, &u.Handle, &u.DisplayName, &u.IsAdmin, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.TenantID, &u.Handle, &u.DisplayName, &u.Email, &u.IsAdmin, &u.ToSAccepted, &u.PasskeySetup, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -217,6 +220,93 @@ func (s *Store) SetUserAdmin(ctx context.Context, id string, isAdmin bool) error
 	res, err := s.db.ExecContext(ctx, `UPDATE users SET is_admin = ? WHERE id = ?`, isAdmin, id)
 	if err != nil {
 		return fmt.Errorf("store: set user admin: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserEmail sets a user's email address.
+func (s *Store) SetUserEmail(ctx context.Context, id, email string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET email = ? WHERE id = ?`, email, id)
+	if err != nil {
+		return fmt.Errorf("store: set user email: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetToSAccepted records that a user accepted the Terms of Service.
+func (s *Store) SetToSAccepted(ctx context.Context, id string, accepted bool) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET tos_accepted = ? WHERE id = ?`, accepted, id)
+	if err != nil {
+		return fmt.Errorf("store: set tos accepted: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetPasskeySetup records whether a user has completed passkey setup.
+func (s *Store) SetPasskeySetup(ctx context.Context, id string, done bool) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET passkey_setup = ? WHERE id = ?`, done, id)
+	if err != nil {
+		return fmt.Errorf("store: set passkey setup: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// InviteToken is a one-time magic-link token for user onboarding.
+// TokenHash holds the SHA-256 hash of the raw token, never the raw token.
+type InviteToken struct {
+	ID        string
+	TokenHash string
+	UserID    string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	UsedAt    time.Time
+}
+
+// CreateInviteToken persists a hashed invite token.
+func (s *Store) CreateInviteToken(ctx context.Context, t *InviteToken) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO invite_tokens (id, token_hash, user_id, expires_at) VALUES (?, ?, ?, ?)`,
+		t.ID, t.TokenHash, t.UserID, t.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("store: create invite token: %w", err)
+	}
+	return nil
+}
+
+// InviteTokenByHash returns an invite token by its hashed value.
+func (s *Store) InviteTokenByHash(ctx context.Context, hash string) (*InviteToken, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, token_hash, user_id, created_at, expires_at, used_at FROM invite_tokens WHERE token_hash = ?`, hash)
+	var t InviteToken
+	var used sql.NullTime
+	err := row.Scan(&t.ID, &t.TokenHash, &t.UserID, &t.CreatedAt, &t.ExpiresAt, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	t.UsedAt = used.Time
+	return &t, nil
+}
+
+// MarkInviteTokenUsed marks an invite token as consumed.
+func (s *Store) MarkInviteTokenUsed(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE invite_tokens SET used_at = ? WHERE id = ?`, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("store: mark invite token used: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound

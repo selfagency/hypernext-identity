@@ -36,6 +36,8 @@ systems or cryptography expert.
 | ActivityPub (actor document + HTTP-signature verification) | Partial | `internal/protocols/activitypub` |
 | OIDC provider | **Shipped** | identity host `id.<domain>` — discovery/authorize/token/userinfo/jwks |
 | WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register\|login/{begin,finish}` |
+| Admin user creation + magic-link invites | **Shipped** | identity host `/admin/users` (admin-guarded) |
+| Magic-link redemption + user panel | **Shipped** | identity host `/invite/{token}`, `/panel` |
 | Admin backup + moderation | **Shipped** | identity host `/admin/backup`, `/admin/moderation/takedown` (admin-guarded) |
 | Backup / restore | **Shipped** | `internal/backup` — scheduled backups + restore |
 | IndieAuth | **Shipped** | identity host `/indieauth/auth`, `/indieauth/token` |

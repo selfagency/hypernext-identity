@@ -16,6 +16,7 @@ import (
 	"github.com/selfagency/sovereign/internal/admin"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
+	"github.com/selfagency/sovereign/internal/mail"
 	"github.com/selfagency/sovereign/internal/moderation"
 	"github.com/selfagency/sovereign/internal/protocols/activitypub"
 	"github.com/selfagency/sovereign/internal/protocols/atproto"
@@ -39,6 +40,7 @@ type Server struct {
 	store     *store.Store
 	authStore *auth.SQLStore
 	blobs     storage.Backend
+	mailer    mail.Sender
 	mux       http.Handler
 	logger    *slog.Logger
 }
@@ -81,6 +83,16 @@ func New(cfg *Config) (*Server, error) {
 	}
 
 	s := &Server{cfg: cfg, store: st, authStore: authStore, blobs: blobs, logger: logger}
+	// Build the mail sender: SMTP when configured, else the dev logging
+	// fallback so magic links remain testable without a mail server.
+	if cfg.SMTP.Enabled() {
+		s.mailer = mail.NewSMTP(&mail.SMTPConfig{
+			Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
+			Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS,
+		})
+	} else {
+		s.mailer = mail.NewLogSender(logger)
+	}
 	s.buildRouter()
 	return s, nil
 }
@@ -271,6 +283,14 @@ func (s *Server) buildRouter() {
 		// Admin routes on the identity host, behind the admin guard.
 		identity.Handle("/admin/backup", adminGuard.Middleware(backupHandler))
 		identity.Handle("/admin/moderation/takedown", adminGuard.Middleware(takedown))
+		// Admin user creation + magic-link invite.
+		userHandler := &admin.UserHandler{Store: s.store, Sender: s.mailer, BaseURL: "https://" + identityHost}
+		identity.Handle("/admin/users", adminGuard.Middleware(userHandler))
+		// Magic-link redemption (public, no admin guard).
+		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial()))
+		// User panel (first-login ToS + passkey + profile).
+		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial()))
+		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial()))
 		// IPFS pinning broker, behind the admin guard.
 		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
 		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))

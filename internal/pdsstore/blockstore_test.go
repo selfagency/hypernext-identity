@@ -162,3 +162,54 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 		t.Fatalf("data = %q, want persistent", got.RawData())
 	}
 }
+
+// TestRootEmpty verifies Root returns "" when no root is stored.
+func TestRootEmpty(t *testing.T) {
+	b := newTestBlockstore(t)
+	root, err := b.Root(context.Background())
+	if err != nil {
+		t.Fatalf("Root: %v", err)
+	}
+	if root != "" {
+		t.Fatalf("Root = %q, want empty", root)
+	}
+}
+
+// TestSetRootRoundTrip verifies SetRoot persists and Root reads it back.
+func TestSetRootRoundTrip(t *testing.T) {
+	b := newTestBlockstore(t)
+	ctx := context.Background()
+	if err := b.SetRoot(ctx, "bafyroot"); err != nil {
+		t.Fatalf("SetRoot: %v", err)
+	}
+	root, err := b.Root(ctx)
+	if err != nil || root != "bafyroot" {
+		t.Fatalf("Root = %q, %v, want bafyroot", root, err)
+	}
+	// Overwrite.
+	if err := b.SetRoot(ctx, "bafyroot2"); err != nil {
+		t.Fatalf("SetRoot (update): %v", err)
+	}
+	root, _ = b.Root(ctx)
+	if root != "bafyroot2" {
+		t.Fatalf("Root after update = %q, want bafyroot2", root)
+	}
+}
+
+// TestHashOnReadNoop verifies HashOnRead is a safe no-op.
+func TestHashOnReadNoop(t *testing.T) {
+	b := newTestBlockstore(t)
+	b.HashOnRead(true)
+	b.HashOnRead(false)
+}
+
+// TestGetSizeMissing verifies GetSize on a missing block returns ErrNotFound.
+func TestGetSizeMissing(t *testing.T) {
+	b := newTestBlockstore(t)
+	c := cid.NewCidV1(cid.Raw, []byte("missing"))
+	if _, err := b.GetSize(context.Background(), c); err == nil {
+		t.Fatal("expected error for missing block")
+	} else if _, ok := err.(*ipld.ErrNotFound); !ok {
+		t.Fatalf("error = %T, want *ipld.ErrNotFound", err)
+	}
+}
