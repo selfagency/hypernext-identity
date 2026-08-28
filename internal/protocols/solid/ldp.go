@@ -41,6 +41,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleGet(w, r, backend, key, agent)
 	case http.MethodPut, http.MethodPost:
 		s.handleWrite(w, r, backend, key, agent)
+	case http.MethodPatch:
+		s.handlePatch(w, r, backend, key, agent)
 	case http.MethodDelete:
 		s.handleDelete(w, r, backend, key, agent)
 	default:
@@ -102,6 +104,46 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request, backend sto
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handlePatch applies an LDP patch (SPARQL-update INSERT DATA / DELETE DATA
+// subset) to an RDF resource. Non-RDF content types are rejected.
+func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request, backend storage.Backend, key string, agent Agent) {
+	if !s.ACL.CanWrite(r.Context(), key, agent) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	ct := r.Header.Get("Content-Type")
+	if ct != "application/sparql-update" && ct != "text/npatch" {
+		http.Error(w, "unsupported patch media type", http.StatusUnsupportedMediaType)
+		return
+	}
+	rc, _, err := backend.Get(r.Context(), key)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	current, err := io.ReadAll(rc)
+	if err != nil {
+		http.Error(w, "read error", http.StatusInternalServerError)
+		return
+	}
+	patch, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	merged, err := applyNPatch(string(current), string(patch))
+	if err != nil {
+		http.Error(w, "invalid patch: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := backend.Put(r.Context(), key, strings.NewReader(merged), "text/turtle"); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleDelete removes a resource.

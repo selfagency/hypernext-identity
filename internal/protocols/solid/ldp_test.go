@@ -172,12 +172,12 @@ func TestNoTenant(t *testing.T) {
 func TestMethodNotAllowed(t *testing.T) {
 	srv, _ := newTestServer(t)
 	h := withTenant(srv, "alice.example.com")
-	req := httptest.NewRequest("PATCH", "/docs/x", http.NoBody)
+	req := httptest.NewRequest("TRACE", "/docs/x", http.NoBody)
 	req.Host = "alice.example.com"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("PATCH = %d, want 405", rec.Code)
+		t.Fatalf("TRACE = %d, want 405", rec.Code)
 	}
 }
 
@@ -239,5 +239,84 @@ func TestAgentFromRequestBearer(t *testing.T) {
 	req4.Header.Set("Authorization", "Bearer x")
 	if a := s3.agentFromRequest(req4); a.WebID != "" {
 		t.Fatalf("no-validator agent WebID = %q, want empty", a.WebID)
+	}
+}
+
+// seedTTL stores a Turtle resource and returns the server.
+func seedTTL(t *testing.T, h http.Handler, key, body string) {
+	t.Helper()
+	req := httptest.NewRequest("PUT", "/"+key, strings.NewReader(body))
+	req.Host = "alice.example.com"
+	req.Header.Set("Content-Type", "text/turtle")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("seed PUT %s = %d, want 201", key, rec.Code)
+	}
+}
+
+// TestPatchInsertData proves LDP PATCH with INSERT DATA adds triples.
+func TestPatchInsertData(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+	seedTTL(t, h, "docs/note.ttl", "@prefix dc: <http://purl.org/dc/terms/>.\n<> dc:title \"Old\".")
+
+	patch := `INSERT DATA { <> <http://purl.org/dc/terms/title> "New" . }`
+	req := httptest.NewRequest("PATCH", "/docs/note.ttl", strings.NewReader(patch))
+	req.Host = "alice.example.com"
+	req.Header.Set("Content-Type", "application/sparql-update")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("PATCH INSERT DATA = %d, want 204", rec.Code)
+	}
+
+	getReq := httptest.NewRequest("GET", "/docs/note.ttl", http.NoBody)
+	getReq.Host = "alice.example.com"
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	if !strings.Contains(getRec.Body.String(), `"New"`) {
+		t.Fatalf("PATCH did not add triple; body = %q", getRec.Body.String())
+	}
+}
+
+// TestPatchDeleteData proves LDP PATCH with DELETE DATA removes triples.
+func TestPatchDeleteData(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+	seedTTL(t, h, "docs/note.ttl", "@prefix dc: <http://purl.org/dc/terms/>.\n<> dc:title \"Old\".")
+
+	patch := `DELETE DATA { <> <http://purl.org/dc/terms/title> "Old" . }`
+	req := httptest.NewRequest("PATCH", "/docs/note.ttl", strings.NewReader(patch))
+	req.Host = "alice.example.com"
+	req.Header.Set("Content-Type", "application/sparql-update")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("PATCH DELETE DATA = %d, want 204", rec.Code)
+	}
+
+	getReq := httptest.NewRequest("GET", "/docs/note.ttl", http.NoBody)
+	getReq.Host = "alice.example.com"
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	if strings.Contains(getRec.Body.String(), `"Old"`) {
+		t.Fatalf("PATCH did not remove triple; body = %q", getRec.Body.String())
+	}
+}
+
+// TestPatchUnsupportedMediaType proves non-RDF patch bodies are rejected.
+func TestPatchUnsupportedMediaType(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+	seedTTL(t, h, "docs/note.ttl", "<> a <http://example.com/Thing>.")
+
+	req := httptest.NewRequest("PATCH", "/docs/note.ttl", strings.NewReader("not rdf"))
+	req.Host = "alice.example.com"
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("PATCH text/plain = %d, want 415", rec.Code)
 	}
 }
