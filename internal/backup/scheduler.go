@@ -17,10 +17,12 @@ import (
 	"github.com/selfagency/sovereign/internal/storage"
 )
 
-// Destination is where backups are written.
+// Destination is where backups are written and read back.
 type Destination interface {
 	// WriteBackup stores a backup blob and returns its key.
 	WriteBackup(ctx context.Context, name string, r io.Reader) (string, error)
+	// ReadBackup opens a stored backup for reading.
+	ReadBackup(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
 // Validation sentinels for backup config.
@@ -46,6 +48,12 @@ func (d *FSDestination) WriteBackup(ctx context.Context, name string, r io.Reade
 	return blob.Key, nil
 }
 
+// ReadBackup opens a stored backup from the FS backend.
+func (d *FSDestination) ReadBackup(ctx context.Context, key string) (io.ReadCloser, error) {
+	rc, _, err := d.Backend.Get(ctx, key)
+	return rc, err
+}
+
 // S3Destination writes backups to an S3-compatible bucket.
 type S3Destination struct {
 	Backend storage.Backend
@@ -60,6 +68,12 @@ func (d *S3Destination) WriteBackup(ctx context.Context, name string, r io.Reade
 		return "", err
 	}
 	return blob.Key, nil
+}
+
+// ReadBackup opens a stored backup from the S3 backend.
+func (d *S3Destination) ReadBackup(ctx context.Context, key string) (io.ReadCloser, error) {
+	rc, _, err := d.Backend.Get(ctx, key)
+	return rc, err
 }
 
 // Config holds the backup schedule and destination.
@@ -77,6 +91,9 @@ type Scheduler struct {
 	// BackupFn produces the backup bytes. The storage phase wires a real
 	// implementation; the interface keeps the scheduler testable.
 	BackupFn func(ctx context.Context) (io.Reader, error)
+	// RestoreFn consumes restored backup bytes. The storage phase wires a real
+	// implementation; the interface keeps the scheduler testable.
+	RestoreFn func(ctx context.Context, r io.Reader) error
 	// Logger receives backup failures (nil disables logging).
 	Logger *slog.Logger
 	// mu guards the status fields below.
@@ -153,6 +170,26 @@ func (s *Scheduler) runBackup() {
 	s.mu.Lock()
 	s.LastError = ""
 	s.mu.Unlock()
+}
+
+// Restore streams a stored backup into RestoreFn. It returns an error if no
+// RestoreFn is configured or the destination cannot read the backup.
+func (s *Scheduler) Restore(ctx context.Context, key string) error {
+	if s.RestoreFn == nil {
+		return errors.New("backup: no restore function configured")
+	}
+	if s.config.Destination == nil {
+		return errors.New("backup: destination is nil")
+	}
+	rc, err := s.config.Destination.ReadBackup(ctx, key)
+	if err != nil {
+		return fmt.Errorf("backup: read: %w", err)
+	}
+	defer func() { _ = rc.Close() }()
+	if err := s.RestoreFn(ctx, rc); err != nil {
+		return fmt.Errorf("backup: restore: %w", err)
+	}
+	return nil
 }
 
 // failError records a backup failure and logs it.

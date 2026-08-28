@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -218,6 +219,77 @@ type failingDestination struct{}
 
 func (failingDestination) WriteBackup(ctx context.Context, name string, r io.Reader) (string, error) {
 	return "", errors.New("destination unreachable")
+}
+
+func (failingDestination) ReadBackup(ctx context.Context, key string) (io.ReadCloser, error) {
+	return nil, errors.New("destination unreachable")
+}
+
+// TestFSDestinationRestoreRoundTrip proves a backup written to FS can be read
+// back byte-for-byte.
+func TestFSDestinationRestoreRoundTrip(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	dest := &FSDestination{Backend: fs, Prefix: "backups"}
+	want := []byte("greatest-backup-ever")
+
+	key, err := dest.WriteBackup(context.Background(), "b1.tar.gz", strings.NewReader(string(want)))
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	rc, err := dest.ReadBackup(context.Background(), key)
+	if err != nil {
+		t.Fatalf("ReadBackup: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, _ := io.ReadAll(rc)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("restore round-trip mismatch: got %q want %q", got, want)
+	}
+}
+
+// TestS3DestinationRestoreRoundTrip proves an S3 backup can be read back.
+func TestS3DestinationRestoreRoundTrip(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	dest := &S3Destination{Backend: fs, Prefix: "backups"}
+	want := []byte("s3-backup")
+
+	key, err := dest.WriteBackup(context.Background(), "b1.tar.gz", strings.NewReader(string(want)))
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	rc, err := dest.ReadBackup(context.Background(), key)
+	if err != nil {
+		t.Fatalf("ReadBackup: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, _ := io.ReadAll(rc)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("restore round-trip mismatch: got %q want %q", got, want)
+	}
+}
+
+// TestSchedulerRestore verifies Restore streams a backup into the RestoreFn.
+func TestSchedulerRestore(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	dest := &FSDestination{Backend: fs, Prefix: "backups"}
+	want := []byte("restore-me")
+	key, err := dest.WriteBackup(context.Background(), "b1.tar.gz", strings.NewReader(string(want)))
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var restored []byte
+	s := NewScheduler(Config{Destination: dest}, nil)
+	s.RestoreFn = func(ctx context.Context, r io.Reader) error {
+		restored, _ = io.ReadAll(r)
+		return nil
+	}
+	if err := s.Restore(context.Background(), key); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if !bytes.Equal(restored, want) {
+		t.Fatalf("restored = %q, want %q", restored, want)
+	}
 }
 
 // logWriter captures slog output.
