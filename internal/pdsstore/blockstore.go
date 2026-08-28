@@ -42,12 +42,36 @@ func Open(path string) (*Blockstore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS repo_root (
+		id   INTEGER PRIMARY KEY CHECK (id = 1),
+		root TEXT NOT NULL
+	)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &Blockstore{db: db}, nil
 }
 
 // Close closes the underlying database.
 func (b *Blockstore) Close() error {
 	return b.db.Close()
+}
+
+// Root returns the persisted repo root CID, or "" if none is stored.
+func (b *Blockstore) Root(ctx context.Context) (string, error) {
+	var root string
+	err := b.db.QueryRowContext(ctx, `SELECT root FROM repo_root WHERE id = 1`).Scan(&root)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return root, err
+}
+
+// SetRoot persists the repo root CID.
+func (b *Blockstore) SetRoot(ctx context.Context, root string) error {
+	_, err := b.db.ExecContext(ctx, `INSERT INTO repo_root (id, root) VALUES (1, ?)
+		ON CONFLICT(id) DO UPDATE SET root = excluded.root`, root)
+	return err
 }
 
 // Put stores a block keyed by its CID.

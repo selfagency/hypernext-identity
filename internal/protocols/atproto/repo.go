@@ -6,6 +6,7 @@ import (
 
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
 	"github.com/bluesky-social/indigo/repo"
+	"github.com/ipfs/go-cid"
 
 	"github.com/selfagency/sovereign/internal/pdsstore"
 )
@@ -19,11 +20,29 @@ type Repo struct {
 
 // NewRepo creates a durable repo for a DID with the given signing key. The
 // repo's MST/records/commits are persisted to a SQLite blockstore at path,
-// surviving restarts.
+// surviving restarts. If a repo already exists at path, it is reopened.
 func NewRepo(ctx context.Context, did string, sk atcrypto.PrivateKey, blockstorePath string) (*Repo, error) {
 	bs, err := pdsstore.Open(blockstorePath)
 	if err != nil {
 		return nil, fmt.Errorf("open blockstore: %w", err)
+	}
+	root, err := bs.Root(ctx)
+	if err != nil {
+		_ = bs.Close()
+		return nil, fmt.Errorf("read repo root: %w", err)
+	}
+	if root != "" {
+		rootCid, err := cid.Decode(root)
+		if err != nil {
+			_ = bs.Close()
+			return nil, fmt.Errorf("decode repo root: %w", err)
+		}
+		r, err := repo.OpenRepo(ctx, bs, rootCid)
+		if err != nil {
+			_ = bs.Close()
+			return nil, fmt.Errorf("open existing repo: %w", err)
+		}
+		return &Repo{r: r, sk: sk, bs: bs}, nil
 	}
 	r := repo.NewRepo(ctx, did, bs)
 	return &Repo{r: r, sk: sk, bs: bs}, nil
@@ -44,6 +63,7 @@ func (r *Repo) CreateRecord(ctx context.Context, nsid string, rec repo.CborMarsh
 }
 
 // Commit signs and commits the repo, returning the commit CID and revision.
+// The commit root is persisted so the repo can be reopened later.
 func (r *Repo) Commit(ctx context.Context) (commitCid, rev string, err error) {
 	c, rev, err := r.r.Commit(ctx, func(_ context.Context, _ string, data []byte) ([]byte, error) {
 		return r.sk.HashAndSign(data)
@@ -51,12 +71,24 @@ func (r *Repo) Commit(ctx context.Context) (commitCid, rev string, err error) {
 	if err != nil {
 		return "", "", err
 	}
+	if err := r.bs.SetRoot(ctx, c.String()); err != nil {
+		return "", "", fmt.Errorf("persist repo root: %w", err)
+	}
 	return c.String(), rev, nil
 }
 
 // SignedCommit returns the current signed commit.
 func (r *Repo) SignedCommit() repo.SignedCommit {
 	return r.r.SignedCommit()
+}
+
+// GetRecordBytes returns the raw CBOR bytes of a record at rpath.
+func (r *Repo) GetRecordBytes(ctx context.Context, rpath string) (cidStr string, data []byte, err error) {
+	c, d, err := r.r.GetRecordBytes(ctx, rpath)
+	if err != nil {
+		return "", nil, err
+	}
+	return c.String(), *d, nil
 }
 
 // VerifyCommit verifies the repo's signed commit against a public key.
