@@ -10,10 +10,10 @@ small VPS. It assumes you can edit a YAML file and run shell commands. It does
 **not** assume systems or cryptography expertise.
 
 > **What you get at the end:** a running `sovereign` process serving the live
-> HTTP routes on your chosen address. User sign-in is **not** part of this
-> guide — the OIDC/WebAuthn login flow is
-> [not yet mounted](../../explanation/status.md), so this guide covers the
-> server itself, not account creation.
+> HTTP routes on your chosen address, including the OIDC/WebAuthn sign-in
+> flow and the admin surface on the identity host (`id.<domain>`). Account
+> provisioning and the admin UI are covered in the
+> [admin how-to](_index.md).
 
 ## Prerequisites
 

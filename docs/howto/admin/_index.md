@@ -14,6 +14,10 @@ needed, the guide says what to choose and why.
 
 * **[Install Sovereign](install.md)** — build the binary, configure
   `config.yml`, run the server, and point DNS at it.
+* **Admin surface** — the identity host (`id.<domain>`) serves the admin
+  routes `/admin/backup` and `/admin/moderation/takedown`, protected by an
+  admin bearer token. The first user created is the instance admin; admins
+  can add users and grant admin access.
 
 ## Reference you will need
 
@@ -32,8 +36,6 @@ are tracked on the [status page](../../explanation/status.md):
 | Guide | Blocked on |
 |:------|:-----------|
 | Add and manage tenants | tenant-provisioning surface |
-| Back up and restore via the admin UI | admin backup handler mount |
-| Moderate tenants and accounts | moderation handler mount + admin guard |
 | Set up TLS wildcard (DNS-01) | ACME verification |
 
 > Each of these will be written the moment its handler is mounted and has an

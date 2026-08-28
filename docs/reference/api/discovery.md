@@ -47,9 +47,8 @@ carries links for each protocol:
 }
 ```
 
-> The OIDC `issuer` link is advertised for discovery, but the OIDC provider
-> endpoints themselves are [not yet mounted](../../explanation/status.md). The
-> link resolves once the provider is wired.
+> The OIDC `issuer` link is advertised for discovery and resolves on the
+> identity host (`id.<domain>`), where the OIDC provider is mounted.
 
 ## NodeInfo — `/.well-known/nodeinfo`
 

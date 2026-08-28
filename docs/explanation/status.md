@@ -32,13 +32,12 @@ live route or backing test. If you update one, update the other.
 |:-----------|:-------|:---------|:------|
 | Access tokens | **Shipped** | `internal/auth/access_token.go` | Signed, short-lived; validated by the live Solid/remoteStorage routes. |
 | Accounts & migrations | **Shipped** | `internal/store` | Versioned SQLite migrations; accounts table. |
-| OIDC provider | Partial | `internal/auth` | Provider + token issuance exist as a package, but the provider handler is **not yet mounted** — no live discovery/authorize/token endpoints. |
-| WebAuthn / passkeys | Partial | `internal/auth/webauthn.go` | Registration/assertion logic present; no HTTP handlers or session flow mounted. |
+| OIDC provider | **Shipped** | identity host `id.<domain>` | Discovery/authorize/token/userinfo/jwks served on the identity host, backed by a SQLite `op.Storage`. |
+| WebAuthn / passkeys | **Shipped** | identity host `/webauthn/register|login/{begin,finish}` | Store-backed credentials; begin/finish register+login with a TTL session store. |
 
-> **Consequence:** there is currently **no end-to-end human sign-in flow**.
-> OIDC and WebAuthn are real code, but until they are mounted you cannot log
-> in through the browser. Tokens for the live data routes are exercised in
-> tests.
+> **Sign-in flow:** OIDC and WebAuthn are now mounted on the identity host,
+> so a browser-based sign-in flow is reachable. The first user created is the
+> instance admin; admins can add users and grant admin from the admin backend.
 
 ## Data protocols (live routes)
 
@@ -70,9 +69,9 @@ store — they do **not** resolve a per-tenant store.
 | Tenant-isolated blob storage | **Shipped** | `internal/storage` (`Prefixed`) | Shared FS/S3 with escape-proof tenant prefixes (ADR 0002). |
 | Single binary, pure-Go SQLite | **Shipped** | `cmd/sovereign` | No CGO; `modernc.org/sqlite` (ADR 0001). |
 | S3-compatible blob backend | **Shipped** | `internal/storage` (s3) | S3-compatible endpoint support. |
-| Backup / restore | Partial | `internal/backup` | Scheduled backups exist; the admin config handler is **not mounted** and the restore path is in progress. |
-| Moderation (takedown) | Partial | `internal/moderation` | Takedown handler + audit log exist as a package; **not mounted** on the live mux. |
-| IndieAuth | Planned | — | A bridge type exists but is constructed and discarded; not wired. |
+| Backup / restore | Partial | `internal/backup` | Scheduled backups exist; the admin config handler is mounted at `/admin/backup` but the restore path is in progress. |
+| Moderation (takedown) | **Shipped** | `/admin/moderation/takedown` | Takedown handler + persistent audit log, mounted behind the admin guard. |
+| IndieAuth | Planned | — | Not wired. |
 | IPFS pinning (broker) | Planned | `internal/protocols/ipfspin` | Optional client only; no embedded node, no standalone endpoint. |
 
 ## Live HTTP surface
@@ -91,7 +90,18 @@ Exactly these route prefixes are mounted today (see `internal/server/server.go`)
 /xrpc/
 ```
 
-Anything not on this list is not reachable over HTTP, regardless of whether
+On the **identity host** (`id.<domain>`), the OIDC provider and WebAuthn
+endpoints are also mounted:
+
+```text
+/.well-known/openid-configuration   (OIDC discovery)
+/authorize, /token, /userinfo, /keys (OIDC)
+/webauthn/register|login/{begin,finish}
+/admin/backup
+/admin/moderation/takedown
+```
+
+Anything not on these lists is not reachable over HTTP, regardless of whether
 the package exists.
 
 ## How to read "Partial"
@@ -100,7 +110,5 @@ the package exists.
 and is tested, and the named remainder does not yet. The remainder is tracked
 in the phased plan and on each section's index page.
 
-> **Not-yet-mounted subsystems** (OIDC provider, WebAuthn, admin backup,
-> moderation takedown, IndieAuth) are implemented and unit-tested but have no
-> live route. Wiring them is deliberate, staged work — not an oversight — and
-> is the prerequisite for the corresponding user/admin documentation.
+> **Not-yet-mounted subsystems** (IndieAuth) are implemented but have no live
+> route. Wiring them is deliberate, staged work — not an oversight.

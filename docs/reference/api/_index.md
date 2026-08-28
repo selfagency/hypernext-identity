@@ -6,10 +6,10 @@ weight: 40
 # HTTP API reference
 
 Sovereign's HTTP surface. This section documents **only the live, mounted
-routes** — exactly the nine prefixes wired in `internal/server/server.go`.
-Endpoints that exist as Go packages but are not mounted (OIDC, WebAuthn,
-admin, moderation) are **not** documented here as if they were callable; they
-are listed under [Not yet mounted](#not-yet-mounted) and on the
+routes** — the protocol prefixes wired in `internal/server/server.go` plus
+the identity-host endpoints (OIDC, WebAuthn, admin). Endpoints that exist as
+Go packages but are not mounted (IndieAuth) are **not** documented here as if
+they were callable; they are listed on the
 [status page](../../explanation/status.md).
 
 All tenant-scoped routes pass through tenant middleware: the request `Host`
@@ -41,6 +41,21 @@ hosts are rejected.
 * **Content negotiation:** `/profile/` selects a representation from the
   `Accept` header (HTML h-card, ActivityStreams actor, or DID document).
 
+## Identity host (`id.<domain>`)
+
+The identity host serves the OIDC provider, WebAuthn passkey endpoints, and
+the admin surface. These are documented on the
+[status page](../../explanation/status.md) and in the
+[admin how-to](../../howto/admin/_index.md).
+
+| Prefix | Protocol / purpose | Auth |
+|:-------|:-------------------|:-----|
+| `/.well-known/openid-configuration` | OIDC discovery | none |
+| `/authorize`, `/token`, `/userinfo`, `/keys` | OIDC provider | varies |
+| `/webauthn/register|login/{begin,finish}` | WebAuthn passkeys | session |
+| `/admin/backup` | Admin backup config | admin bearer token |
+| `/admin/moderation/takedown` | Admin moderation | admin bearer token |
+
 ## Not yet mounted
 
 The following are implemented and unit-tested as packages, but have **no
@@ -49,11 +64,7 @@ against them yet.
 
 | Subsystem | Package | What is missing |
 |:----------|:--------|:----------------|
-| OIDC provider | `internal/auth` | discovery/authorize/token/jwks routes |
-| WebAuthn passkeys | `internal/auth/webauthn.go` | begin/finish register+login routes |
-| Admin backup config | `internal/admin` | the admin route + auth guard |
-| Moderation takedown | `internal/moderation` | the admin route + auth guard |
-| IndieAuth | `internal/protocols/indieauth` | the bridge is constructed and discarded |
+| IndieAuth | `internal/protocols/indieauth` | not wired |
 
 These are documented (with their planned shapes) once they are mounted. See
 the [status page](../../explanation/status.md) for the wiring plan.
