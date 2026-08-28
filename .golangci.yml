@@ -59,6 +59,12 @@ linters:
       - path: internal/store/store\.go
         linters:
           - gosec
+      # repo.go wraps the pdsstore blockstore in a DAG service for CAR export.
+      # blockservice.New is deprecated in favor of boxo, but boxo is not in
+      # the module graph and pulling it for one call is disproportionate.
+      - path: internal/protocols/atproto/repo\.go
+        linters:
+          - staticcheck
 
 formatters:
   enable:

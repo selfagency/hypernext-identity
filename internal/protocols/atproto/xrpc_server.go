@@ -39,6 +39,8 @@ func (s *XRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.uploadBlob(w, r)
 	case "com.atproto.sync.getBlob":
 		s.getBlob(w, r)
+	case "com.atproto.sync.getRepo":
+		s.getRepo(w, r)
 	default:
 		writeXRPCError(w, http.StatusNotImplemented, "MethodNotImplemented", "method not implemented: "+method)
 	}
@@ -238,6 +240,30 @@ func (s *XRPCServer) getBlob(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = rc.Close() }()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	_, _ = io.Copy(w, rc)
+}
+
+// getRepo implements com.atproto.sync.getRepo. It exports the repo as a CAR.
+func (s *XRPCServer) getRepo(w http.ResponseWriter, r *http.Request) {
+	if s.RepoFactory == nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", "repo factory not configured")
+		return
+	}
+	did := r.URL.Query().Get("did")
+	if did == "" {
+		writeXRPCError(w, http.StatusBadRequest, "InvalidRequest", "did is required")
+		return
+	}
+	rp, err := s.RepoFactory(r.Context(), did)
+	if err != nil {
+		writeXRPCError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	defer func() { _ = rp.Close() }()
+	w.Header().Set("Content-Type", "application/vnd.ipld.car")
+	if err := rp.WriteCAR(r.Context(), w); err != nil {
+		writeXRPCError(w, http.StatusNotFound, "RepoNotFound", "repo not found")
+		return
+	}
 }
 
 // writeJSON writes a JSON response.
