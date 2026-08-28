@@ -282,18 +282,12 @@ func TestAuditLog(t *testing.T) {
 func TestUserOnboardingState(t *testing.T) {
 	ctx := context.Background()
 	s := newAuthTestStore(t)
-	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice", Email: "a@example.com"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}))
+	must(t, s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice", Email: "a@example.com"}))
 
 	// Email round-trips through UserByID.
 	u, err := s.UserByID(ctx, "u1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must(t, err)
 	if u.Email != "a@example.com" {
 		t.Fatalf("email = %q, want a@example.com", u.Email)
 	}
@@ -302,18 +296,20 @@ func TestUserOnboardingState(t *testing.T) {
 	}
 
 	// Set email, ToS, passkey flags.
-	if err := s.SetUserEmail(ctx, "u1", "b@example.com"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetToSAccepted(ctx, "u1", true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetPasskeySetup(ctx, "u1", true); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetUserEmail(ctx, "u1", "b@example.com"))
+	must(t, s.SetToSAccepted(ctx, "u1", true))
+	must(t, s.SetPasskeySetup(ctx, "u1", true))
 	u2, _ := s.UserByID(ctx, "u1")
 	if u2.Email != "b@example.com" || !u2.ToSAccepted || !u2.PasskeySetup {
 		t.Fatalf("updated user = %+v", u2)
+	}
+}
+
+// must fails the test if err is non-nil.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
