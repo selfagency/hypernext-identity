@@ -31,7 +31,7 @@ systems or cryptography expert.
 | Keyoxide-style public identity proofs | **Shipped** | `/.well-known/proofs` |
 | Solid Pod (LDP + PATCH + WAC + Solid-OIDC) | **Shipped** | `/solid/` |
 | remoteStorage (core read/write + conditionals + folder listing) | **Shipped** | `/rs/` |
-| AT Protocol PDS (repo + a small set of XRPC reads) | Partial | `/xrpc/` |
+| AT Protocol PDS (repo writes, blobs, sync, sessions) | **Shipped** | `/xrpc/` |
 | Profile (content-negotiated h-card / actor / DID doc) | **Shipped** | `/profile/` |
 | ActivityPub (actor document + HTTP-signature verification) | Partial | `internal/protocols/activitypub` |
 | OIDC provider | **Shipped** | identity host `id.<domain>` — discovery/authorize/token/userinfo/jwks |

@@ -45,7 +45,7 @@ live route or backing test. If you update one, update the other.
 |:-----------|:-------|:---------|:------|
 | remoteStorage | **Shipped** | route `/rs/` | Core read/write with tenant-prefixed isolation, bearer scope enforcement, ETags, `If-Match`/`If-None-Match` conditionals, and folder listing. |
 | Solid Pod (LDP) | **Shipped** | route `/solid/` | LDP reads/writes/PATCH, HEAD/OPTIONS, Web Access Control (WAC) rule documents, and a Solid-OIDC `webid`-claim identity challenge. No live notifications. |
-| atproto XRPC | Partial | route `/xrpc/` | Two reads only (`resolveHandle`, `getProfile`). **Not a full PDS.** The repo/commit-signing and blob code in `internal/protocols/atproto` (`repo.go`, `blob.go`) is implemented and unit-tested but **not wired** to any endpoint — there are no `com.atproto.repo.*`, `com.atproto.sync.*`, or session routes. |
+| atproto XRPC | **Shipped** | route `/xrpc/` | PDS surface: `resolveHandle`, `getProfile`, `createRecord`, `getRecord`, `uploadBlob`, `sync.getBlob`, `sync.getRepo`, and passkey-authenticated `createSession`. The repo/commit-signing and blob machinery is wired to live endpoints. |
 
 ## Discovery & proofs (live routes)
 
