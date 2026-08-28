@@ -37,7 +37,7 @@ systems or cryptography expert.
 | OIDC provider | **Shipped** | identity host `id.<domain>` — discovery/authorize/token/userinfo/jwks |
 | WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register\|login/{begin,finish}` |
 | Admin backup + moderation | **Shipped** | identity host `/admin/backup`, `/admin/moderation/takedown` (admin-guarded) |
-| Backup / restore | Partial | `internal/backup` — scheduled backups; restore in progress |
+| Backup / restore | **Shipped** | `internal/backup` — scheduled backups + restore |
 | IndieAuth | Planned | not wired |
 | IPFS pinning (optional broker) | Planned | `internal/protocols/ipfspin` |
 

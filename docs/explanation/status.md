@@ -69,7 +69,7 @@ store — they do **not** resolve a per-tenant store.
 | Tenant-isolated blob storage | **Shipped** | `internal/storage` (`Prefixed`) | Shared FS/S3 with escape-proof tenant prefixes (ADR 0002). |
 | Single binary, pure-Go SQLite | **Shipped** | `cmd/sovereign` | No CGO; `modernc.org/sqlite` (ADR 0001). |
 | S3-compatible blob backend | **Shipped** | `internal/storage` (s3) | S3-compatible endpoint support. |
-| Backup / restore | Partial | `internal/backup` | Scheduled backups exist; the admin config handler is mounted at `/admin/backup` but the restore path is in progress. |
+| Backup / restore | **Shipped** | `internal/backup` | Scheduled backups + a restore path (ReadBackup + Scheduler.Restore). |
 | Moderation (takedown) | **Shipped** | `/admin/moderation/takedown` | Takedown handler + persistent audit log, mounted behind the admin guard. |
 | IndieAuth | Planned | — | Not wired. |
 | IPFS pinning (broker) | Planned | `internal/protocols/ipfspin` | Optional client only; no embedded node, no standalone endpoint. |
