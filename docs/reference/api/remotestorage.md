@@ -10,10 +10,9 @@ Implements the core read/write surface of the
 tenant resolved from the request host. Verified against
 `internal/protocols/remotestorage/handler.go`.
 
-> **Status: Partial.** Core GET/PUT/DELETE with bearer-scope enforcement,
-> CORS, and strong ETags works and is tested. Directory-listing metadata,
-> `If-None-Match`/`If-Match` conditional handling, and the full spec surface
-> are not yet implemented.
+> **Status: Shipped.** Core GET/PUT/DELETE with bearer-scope enforcement,
+> CORS, strong ETags, `If-Match`/`If-None-Match` conditional handling, and
+> folder listing all work and are tested.
 
 ## Base URL
 
@@ -50,9 +49,10 @@ A request that lacks the required scope → `403 forbidden`.
 
 | Method | Path | Scope | Success | Notes |
 |:-------|:-----|:------|:--------|:------|
-| `GET` | `/rs/<path>` | `r` | `200` + body | Streams the blob; `Content-Type` from storage. Missing key → `404`. |
-| `PUT` | `/rs/<path>` | `rw` | `200` + `ETag` | Stores the body; returns a strong `ETag` (SHA-256 of content). |
-| `DELETE` | `/rs/<path>` | `rw` | `200` | Deletes the key. Missing key → `404`. |
+| `GET` | `/rs/<path>` | `r` | `200` + body | Streams the blob; `Content-Type` from storage. Missing key → `404`. Emits a strong `ETag`; honors `If-None-Match` (→ `304` on hit). |
+| `GET` | `/rs/<path>/` | `r` | `200` + JSON-LD | **Folder listing** (trailing slash): direct children with `ETag`, `Content-Type`, `Content-Length`. |
+| `PUT` | `/rs/<path>` | `rw` | `200` + `ETag` | Stores the body; returns a strong `ETag` (SHA-256 of content). Enforces `If-Match`/`If-None-Match` (→ `412` on mismatch). |
+| `DELETE` | `/rs/<path>` | `rw` | `200` | Deletes the key. Missing key → `404`. Enforces `If-Match`/`If-None-Match`. |
 | `OPTIONS` | `/rs/<path>` | — | `200` | CORS preflight. No token required. |
 
 Other methods → `405 method not allowed`.
@@ -69,9 +69,33 @@ Access-Control-Allow-Headers: Authorization, Content-Type, If-Match, If-None-Mat
 
 ## ETag / caching
 
-`PUT` returns a strong `ETag` computed as the hex SHA-256 of the stored body,
-quoted (`"<hex>"`). `If-Match` / `If-None-Match` conditional semantics are
-**accepted in the CORS header list but not yet enforced** by the handler.
+`PUT` and `GET` return a strong `ETag` computed as the hex SHA-256 of the
+body, quoted (`"<hex>"`). Conditional requests are enforced:
+
+* `If-None-Match: <etag>` on `GET` → `304 Not Modified` when the current
+  ETag matches.
+* `If-Match: <etag>` on `PUT`/`DELETE` → `412 Precondition Failed` when the
+  current ETag does not match.
+* `If-None-Match: *` on `PUT` → `412` when the resource already exists
+  (create-only semantics).
+* `If-Match: *` on `PUT`/`DELETE` → `412` when the resource does not exist.
+
+ETag lists may use weak `W/` prefixes or `*`.
+
+## Folder listing
+
+`GET` on a path with a trailing slash returns a remoteStorage
+folder-description JSON-LD document listing the **direct children** of that
+folder, each with its `ETag`, `Content-Type`, and `Content-Length`:
+
+```json
+{
+  "@context": "http://remotestorage.io/spec/folder-description",
+  "items": {
+    "a.txt": { "ETag": "\"<sha256>\"", "Content-Type": "text/plain", "Content-Length": 5 }
+  }
+}
+```
 
 ## Example
 

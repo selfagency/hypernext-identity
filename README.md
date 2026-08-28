@@ -30,7 +30,7 @@ systems or cryptography expert.
 | Public SSH/PGP key hosting (+ WKD path) | **Shipped** | `/keys`, `/.well-known/openpgpkey/` |
 | Keyoxide-style public identity proofs | **Shipped** | `/.well-known/proofs` |
 | Solid Pod (LDP reads/writes, WebID, ownership ACL) | Partial | `/solid/` |
-| remoteStorage (core read/write) | Partial | `/rs/` |
+| remoteStorage (core read/write + conditionals + folder listing) | **Shipped** | `/rs/` |
 | AT Protocol PDS (repo + a small set of XRPC reads) | Partial | `/xrpc/` |
 | Profile (content-negotiated h-card / actor / DID doc) | Partial | `/profile/` |
 | ActivityPub (actor document + HTTP-signature verification) | Partial | `internal/protocols/activitypub` |
