@@ -35,7 +35,7 @@ systems or cryptography expert.
 | Profile (content-negotiated h-card / actor / DID doc) | Partial | `/profile/` |
 | ActivityPub (actor document + HTTP-signature verification) | Partial | `internal/protocols/activitypub` |
 | OIDC provider | **Shipped** | identity host `id.<domain>` — discovery/authorize/token/userinfo/jwks |
-| WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register|login/{begin,finish}` |
+| WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register\|login/{begin,finish}` |
 | Admin backup + moderation | **Shipped** | identity host `/admin/backup`, `/admin/moderation/takedown` (admin-guarded) |
 | Backup / restore | Partial | `internal/backup` — scheduled backups; restore in progress |
 | IndieAuth | Planned | not wired |

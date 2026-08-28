@@ -40,9 +40,8 @@ In scope:
   [Project status](docs/explanation/status.md) for what is actually mounted).
 
 Out of scope (currently **not** part of the attack surface because not wired
-into the live server): the IndieAuth bridge and the not-yet-mounted admin UI.
-Please still report issues you find in that code — but note they are not
-reachable over HTTP today.
+into the live server): the IndieAuth bridge. Please still report issues you
+find in that code — but note it is not reachable over HTTP today.
 
 ## Security design notes
 

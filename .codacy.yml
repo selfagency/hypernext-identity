@@ -12,6 +12,7 @@ exclude_paths:
   # acronym/vague-rule checks) flag it heavily and are not actionable for
   # prose docs. Same rationale as the AGENTS.md exclusion above.
   - "docs/**"
+  - "SECURITY.md"
 
 # Per-tool configuration. gosec flags the WKD z-base-32 hash (SHA-1) as
 # insecure, but SHA-1 is mandated by the WKD spec for the localpart hash and
