@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zitadel/oidc/v3/pkg/op"
+
+	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/protocols/atproto"
+	"github.com/selfagency/sovereign/internal/protocols/nodeinfo"
 	"github.com/selfagency/sovereign/internal/storage"
 	"github.com/selfagency/sovereign/internal/store"
 	"github.com/selfagency/sovereign/internal/tenant"
@@ -41,9 +47,6 @@ data_dir: ./data
 	// Defaults applied.
 	if cfg.Storage.Backend != "fs" {
 		t.Fatalf("storage.backend = %q, want fs", cfg.Storage.Backend)
-	}
-	if cfg.SQLite.Mode != "per_tenant" {
-		t.Fatalf("sqlite.mode = %q, want per_tenant", cfg.SQLite.Mode)
 	}
 	if cfg.Log.Level != "info" {
 		t.Fatalf("log.level = %q, want info", cfg.Log.Level)
@@ -83,10 +86,9 @@ func TestNewServer(t *testing.T) {
 		Domain:  "example.com",
 		DataDir: t.TempDir(),
 		Storage: StorageConfig{Backend: "fs"},
-		SQLite:  SQLiteConfig{Mode: "single"},
 		Log:     LogConfig{Level: "info", Format: "text"},
 	}
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -96,16 +98,103 @@ func TestNewServer(t *testing.T) {
 	}
 }
 
+// nodeInfoDoc fetches the NodeInfo document from the assembled router.
+func nodeInfoDoc(t *testing.T, srv *Server) nodeinfo.NodeInfo {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/.well-known/nodeinfo", http.NoBody)
+	req.Host = "alice.example.com"
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nodeinfo status = %d, want 200", rec.Code)
+	}
+	var doc nodeinfo.NodeInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("invalid NodeInfo JSON: %v", err)
+	}
+	return doc
+}
+
+// TestNodeInfoVersionFromBuild verifies NodeInfo SoftwareVersion matches the
+// build version passed to New(cfg, version), not a Config field.
+func TestNodeInfoVersionFromBuild(t *testing.T) {
+	cfg := &Config{
+		Domain:  "example.com",
+		DataDir: t.TempDir(),
+		Storage: StorageConfig{Backend: "fs"},
+		Log:     LogConfig{Level: "info", Format: "text"},
+	}
+	srv, err := New(cfg, "1.2.3-test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+	_ = srv.store.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+
+	if got := nodeInfoDoc(t, srv).Software.Version; got != "1.2.3-test" {
+		t.Fatalf("software version = %q, want %q", got, "1.2.3-test")
+	}
+}
+
+// TestNodeInfoProtocolsWired verifies NodeInfo Protocols lists the wired set,
+// including activitypub (ServeActor is served at /profile/).
+func TestNodeInfoProtocolsWired(t *testing.T) {
+	cfg := &Config{
+		Domain:  "example.com",
+		DataDir: t.TempDir(),
+		Storage: StorageConfig{Backend: "fs"},
+		Log:     LogConfig{Level: "info", Format: "text"},
+	}
+	srv, err := New(cfg, "dev")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+	_ = srv.store.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+
+	got := nodeInfoDoc(t, srv).Protocols
+	want := []string{"solid", "remotestorage", "atproto", "activitypub"}
+	if len(got) != len(want) {
+		t.Fatalf("protocols = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("protocols = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestNodeInfoOpenRegistrationsFromConfig verifies NodeInfo OpenRegistrations
+// derives from the config field.
+func TestNodeInfoOpenRegistrationsFromConfig(t *testing.T) {
+	cfg := &Config{
+		Domain:            "example.com",
+		DataDir:           t.TempDir(),
+		Storage:           StorageConfig{Backend: "fs"},
+		Log:               LogConfig{Level: "info", Format: "text"},
+		OpenRegistrations: true,
+	}
+	srv, err := New(cfg, "dev")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+	_ = srv.store.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
+
+	if !nodeInfoDoc(t, srv).OpenRegistrations {
+		t.Fatal("open registrations should be true from config")
+	}
+}
+
 // TestServerRoutes verifies the assembled router serves known endpoints.
 func TestServerRoutes(t *testing.T) {
 	cfg := &Config{
 		Domain:  "example.com",
 		DataDir: t.TempDir(),
 		Storage: StorageConfig{Backend: "fs"},
-		SQLite:  SQLiteConfig{Mode: "single"},
 		Log:     LogConfig{Level: "info", Format: "text"},
 	}
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -152,10 +241,9 @@ func TestServerUnknownTenant(t *testing.T) {
 		Domain:  "example.com",
 		DataDir: t.TempDir(),
 		Storage: StorageConfig{Backend: "fs"},
-		SQLite:  SQLiteConfig{Mode: "single"},
 		Log:     LogConfig{Level: "info", Format: "text"},
 	}
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,16 +322,56 @@ func TestBuildBlobBackendUnknown(t *testing.T) {
 	}
 }
 
+// TestNewFailsOnOIDCInitError verifies that an OIDC provider init failure
+// is fatal: New returns an error instead of booting with auth disabled.
+func TestNewFailsOnOIDCInitError(t *testing.T) {
+	orig := newAuthProvider
+	newAuthProvider = func(string, op.Storage) (*auth.Provider, error) {
+		return nil, errors.New("injected oidc failure")
+	}
+	defer func() { newAuthProvider = orig }()
+
+	cfg := &Config{
+		Domain:  "example.com",
+		DataDir: t.TempDir(),
+		Storage: StorageConfig{Backend: "fs"},
+		Log:     LogConfig{Level: "info", Format: "text"},
+	}
+	if _, err := New(cfg, "dev"); err == nil {
+		t.Fatal("expected New to fail on OIDC provider init error")
+	}
+}
+
+// TestNewFailsOnWebAuthnInitError verifies that a WebAuthn handler init
+// failure is fatal: New returns an error instead of booting with auth
+// disabled.
+func TestNewFailsOnWebAuthnInitError(t *testing.T) {
+	orig := newWebAuthnHandler
+	newWebAuthnHandler = func(string, string, string, *store.Store) (*auth.WebAuthnHandler, error) {
+		return nil, errors.New("injected webauthn failure")
+	}
+	defer func() { newWebAuthnHandler = orig }()
+
+	cfg := &Config{
+		Domain:  "example.com",
+		DataDir: t.TempDir(),
+		Storage: StorageConfig{Backend: "fs"},
+		Log:     LogConfig{Level: "info", Format: "text"},
+	}
+	if _, err := New(cfg, "dev"); err == nil {
+		t.Fatal("expected New to fail on WebAuthn handler init error")
+	}
+}
+
 // TestDidDocHandler verifies the DID doc endpoint.
 func TestDidDocHandler(t *testing.T) {
 	cfg := &Config{
 		Domain:  "example.com",
 		DataDir: t.TempDir(),
 		Storage: StorageConfig{Backend: "fs"},
-		SQLite:  SQLiteConfig{Mode: "single"},
 		Log:     LogConfig{Level: "info", Format: "text"},
 	}
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -261,6 +389,81 @@ func TestDidDocHandler(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "did:web:alice.example.com") {
 		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
+// TestDIDDocUsesTenantHandle verifies the DID doc derives did:web: and
+// alsoKnownAs from the resolved tenant.Handle (never r.Host) and that a
+// stored DID takes precedence over the fallback.
+func TestDIDDocUsesTenantHandle(t *testing.T) {
+	cfg := &Config{
+		Domain:  "example.com",
+		DataDir: t.TempDir(),
+		Storage: StorageConfig{Backend: "fs"},
+		Log:     LogConfig{Level: "info", Format: "text"},
+	}
+	srv, err := New(cfg, "dev")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	// Request host differs from tenant handle to prove r.Host is not used.
+	const handle = "alice.example.com"
+	const reqHost = "evil.example.com"
+
+	cases := []struct {
+		name      string
+		id        string
+		handle    string
+		did       string
+		wantID    string
+		wantKnown string
+	}{
+		{
+			name:      "no stored DID uses normalized handle",
+			id:        "t1",
+			handle:    handle,
+			wantID:    "did:web:" + handle,
+			wantKnown: "https://" + handle + "/profile/",
+		},
+		{
+			name:      "stored DID takes precedence",
+			id:        "t2",
+			handle:    "bob.example.com",
+			did:       "did:example:abc123",
+			wantID:    "did:example:abc123",
+			wantKnown: "https://bob.example.com/profile/",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_ = srv.store.CreateTenant(context.Background(), &store.Tenant{
+				ID: tc.id, Handle: tc.handle, DIDMethod: "web", DID: tc.did,
+			})
+
+			req := httptest.NewRequest("GET", "/profile/", http.NoBody)
+			req.Host = reqHost
+			req.Header.Set("Accept", "application/did+json")
+			req = req.WithContext(tenant.WithTenant(req.Context(), &tenant.Tenant{ID: tc.id, Handle: tc.handle}))
+			rec := httptest.NewRecorder()
+			srv.didDocHandler()(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.wantID) {
+				t.Fatalf("body missing id %q: %s", tc.wantID, body)
+			}
+			if !strings.Contains(body, tc.wantKnown) {
+				t.Fatalf("body missing alsoKnownAs %q: %s", tc.wantKnown, body)
+			}
+			if strings.Contains(body, reqHost) {
+				t.Fatalf("body leaks request host %q: %s", reqHost, body)
+			}
+		})
 	}
 }
 

@@ -21,7 +21,9 @@ import (
 // It implements remotestorage.TokenValidator. Only short-lived signed access
 // tokens are accepted — refresh tokens are rejected (token-type separation).
 type TokenValidator struct {
-	Key *rsa.PrivateKey
+	Key      *rsa.PrivateKey
+	Issuer   string
+	Audience string
 }
 
 // ValidateToken returns the scopes for a bearer access token, or an error if
@@ -30,7 +32,7 @@ func (v *TokenValidator) ValidateToken(ctx context.Context, token string) ([]str
 	if token == "" {
 		return nil, errors.New("wiring: empty token")
 	}
-	claims, err := auth.ValidateAccessToken(v.Key, token)
+	claims, err := auth.ValidateAccessToken(v.Key, token, v.Issuer, v.Audience)
 	if err != nil {
 		return nil, errors.New("wiring: invalid token")
 	}
@@ -44,7 +46,9 @@ var _ remotestorage.TokenValidator = (*TokenValidator)(nil)
 // authenticated subject. It implements solid.TokenValidator, deriving the
 // agent's WebID from the token's subject.
 type SubjectValidator struct {
-	Key *rsa.PrivateKey
+	Key      *rsa.PrivateKey
+	Issuer   string
+	Audience string
 }
 
 // ValidateToken returns the subject for a bearer access token, or an error if
@@ -54,7 +58,7 @@ func (v *SubjectValidator) ValidateToken(ctx context.Context, token string) (str
 	if token == "" {
 		return "", errors.New("wiring: empty token")
 	}
-	claims, err := auth.ValidateAccessToken(v.Key, token)
+	claims, err := auth.ValidateAccessToken(v.Key, token, v.Issuer, v.Audience)
 	if err != nil {
 		return "", errors.New("wiring: invalid token")
 	}

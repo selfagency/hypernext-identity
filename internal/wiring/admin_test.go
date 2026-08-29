@@ -42,7 +42,7 @@ func newAdminTestStore(t *testing.T) (*store.Store, *auth.SQLStore) {
 // mintToken mints a signed access token for the given subject.
 func mintToken(t *testing.T, as *auth.SQLStore, subject string) string {
 	t.Helper()
-	tok, err := auth.MintAccessToken(as.SigningKeyMaterial(), subject, []string{"admin"}, auth.AccessTokenTTL)
+	tok, err := auth.MintAccessToken(as.SigningKeyMaterial(), subject, []string{"admin"}, auth.AccessTokenTTL, testIssuer, testAudience)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func mintToken(t *testing.T, as *auth.SQLStore, subject string) string {
 // TestAdminGuardAdmin verifies an admin token authorizes.
 func TestAdminGuardAdmin(t *testing.T) {
 	st, as := newAdminTestStore(t)
-	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st}
+	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st, Issuer: testIssuer, Audience: testAudience}
 	tok := mintToken(t, as, "admin1")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin", http.NoBody)
@@ -65,7 +65,7 @@ func TestAdminGuardAdmin(t *testing.T) {
 // TestAdminGuardNonAdmin verifies a non-admin token is rejected.
 func TestAdminGuardNonAdmin(t *testing.T) {
 	st, as := newAdminTestStore(t)
-	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st}
+	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st, Issuer: testIssuer, Audience: testAudience}
 	tok := mintToken(t, as, "user1")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin", http.NoBody)
@@ -78,7 +78,7 @@ func TestAdminGuardNonAdmin(t *testing.T) {
 // TestAdminGuardNoToken verifies a missing token is rejected.
 func TestAdminGuardNoToken(t *testing.T) {
 	st, as := newAdminTestStore(t)
-	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st}
+	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st, Issuer: testIssuer, Audience: testAudience}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin", http.NoBody)
 	if guard.Authorize(req) {
@@ -89,7 +89,7 @@ func TestAdminGuardNoToken(t *testing.T) {
 // TestAdminGuardUnknownUser verifies a token for an unknown user is rejected.
 func TestAdminGuardUnknownUser(t *testing.T) {
 	st, as := newAdminTestStore(t)
-	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st}
+	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st, Issuer: testIssuer, Audience: testAudience}
 	tok := mintToken(t, as, "ghost")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin", http.NoBody)
@@ -102,7 +102,7 @@ func TestAdminGuardUnknownUser(t *testing.T) {
 // TestAdminGuardMiddleware verifies the middleware rejects non-admins with 401.
 func TestAdminGuardMiddleware(t *testing.T) {
 	st, as := newAdminTestStore(t)
-	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st}
+	guard := &AdminGuard{Key: as.SigningKeyMaterial(), Store: st, Issuer: testIssuer, Audience: testAudience}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

@@ -34,6 +34,13 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite allows a single writer at a time; cap the pool to one open
+	// connection so concurrent writes serialize instead of contending on
+	// the database lock. Idle connections and connection lifetime bound the
+	// pool so stale handles are recycled.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	ctx := context.Background()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
@@ -62,6 +69,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB exposes the underlying database handle for tests and advanced callers.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // isUniqueViolation reports whether a SQLite error is a UNIQUE constraint
 // violation (SQLITE_CONSTRAINT_UNIQUE, code 2067).
 func isUniqueViolation(err error) bool {
@@ -74,4 +86,12 @@ func nullableTime(t time.Time) any {
 		return nil
 	}
 	return t
+}
+
+// nullableString converts an empty string to a NULL for SQLite columns.
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

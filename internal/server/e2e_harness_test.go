@@ -25,9 +25,6 @@ func fillDefaults(t *testing.T, cfg *Config) {
 	if cfg.Storage.Backend == "" {
 		cfg.Storage.Backend = "fs"
 	}
-	if cfg.SQLite.Mode == "" {
-		cfg.SQLite.Mode = "single"
-	}
 	if cfg.Log.Level == "" {
 		cfg.Log.Level = "info"
 	}
@@ -49,7 +46,7 @@ func startTestServer(t *testing.T, cfg *Config, seedTenant bool) *testServer {
 	t.Helper()
 	fillDefaults(t, cfg)
 
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

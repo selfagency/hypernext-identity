@@ -88,8 +88,12 @@ func (s *SQLStore) Health(_ context.Context) error { return nil }
 // --- op.AuthStorage ---
 
 func (s *SQLStore) CreateAuthRequest(_ context.Context, req *oidc.AuthRequest, _ string) (op.AuthRequest, error) {
+	id, err := newID()
+	if err != nil {
+		return nil, err
+	}
 	ar := &authRequest{
-		id:           newID(),
+		id:           id,
 		clientID:     req.ClientID,
 		scopes:       req.Scopes,
 		redirectURI:  req.RedirectURI,
@@ -144,28 +148,70 @@ func (s *SQLStore) DeleteAuthRequest(_ context.Context, id string) error {
 }
 
 func (s *SQLStore) CreateAccessToken(_ context.Context, _ op.TokenRequest) (string, time.Time, error) {
-	return newID(), time.Now().Add(time.Hour), nil
+	id, err := newID()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return id, time.Now().Add(time.Hour), nil
 }
 
-func (s *SQLStore) CreateAccessAndRefreshTokens(ctx context.Context, request op.TokenRequest, _ string) (string, string, time.Time, error) {
-	access := newID()
-	refresh := newID()
-	// Persist the refresh token (hashed) so it survives restarts.
+// refreshTokenTTL is the lifetime of a persisted refresh token. Grandfathered
+// (pre-migration) tokens carry no expiry; every token minted after migration v6
+// is capped at this TTL.
+const refreshTokenTTL = 30 * 24 * time.Hour
+
+func (s *SQLStore) CreateAccessAndRefreshTokens(ctx context.Context, request op.TokenRequest, refreshToken string) (string, string, time.Time, error) {
+	access, err := newID()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	refresh, err := newID()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
 	clientID := ""
 	if aud := request.GetAudience(); len(aud) > 0 {
 		clientID = aud[0]
 	}
-	if err := s.store.SaveAuthRefreshToken(ctx, &store.AuthRefreshToken{
+	expiresAt := time.Now().UTC().Add(refreshTokenTTL)
+	familyID, err := newID()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	now := time.Now().UTC()
+	token := &store.AuthRefreshToken{
 		Token:     hashToken(refresh),
 		Subject:   request.GetSubject(),
 		ClientID:  clientID,
 		Scopes:    strings.Join(request.GetScopes(), ","),
-		AuthTime:  time.Now().UTC(),
-		CreatedAt: time.Now().UTC(),
-	}); err != nil {
-		return "", "", time.Time{}, err
+		AuthTime:  now,
+		ExpiresAt: expiresAt,
+		FamilyID:  familyID,
+		CreatedAt: now,
+	}
+	if refreshToken != "" {
+		// Rotation: inherit the old token's family so reuse detection can
+		// revoke the whole chain, then mark the old token rotated and insert
+		// the successor atomically.
+		oldHash := hashToken(refreshToken)
+		if old, err := s.store.GetAuthRefreshToken(ctx, oldHash); err == nil && old.FamilyID != "" {
+			token.FamilyID = old.FamilyID
+		}
+		if err := s.store.RotateAuthRefreshToken(ctx, oldHash, token); err != nil {
+			return "", "", time.Time{}, err
+		}
+	} else {
+		// Brand-new grant: persist with an expiry + a fresh family.
+		if err := s.store.SaveAuthRefreshToken(ctx, token); err != nil {
+			return "", "", time.Time{}, err
+		}
 	}
 	s.mu.Lock()
+	// The old token is spent after rotation: drop its in-memory entry so a
+	// replay cannot bypass reuse detection via the map fallback.
+	if refreshToken != "" {
+		delete(s.refresh, refreshToken)
+	}
 	s.refresh[refresh] = &refreshTokenRequest{
 		subject:  request.GetSubject(),
 		clientID: clientID,
@@ -178,13 +224,31 @@ func (s *SQLStore) CreateAccessAndRefreshTokens(ctx context.Context, request op.
 
 func (s *SQLStore) TokenRequestByRefreshToken(ctx context.Context, refreshToken string) (op.RefreshTokenRequest, error) {
 	// Prefer the persisted (hashed) refresh token.
-	subject, clientID, scopes, err := s.store.GetAuthRefreshTokenByHash(ctx, hashToken(refreshToken))
+	t, err := s.store.GetAuthRefreshToken(ctx, hashToken(refreshToken))
 	if err == nil {
+		// Revoked or expired tokens are rejected outright (never falling back
+		// to the in-memory map).
+		if !t.RevokedAt.IsZero() || (!t.ExpiresAt.IsZero() && time.Now().After(t.ExpiresAt)) {
+			s.mu.Lock()
+			delete(s.refresh, refreshToken)
+			s.mu.Unlock()
+			return nil, op.ErrInvalidRefreshToken
+		}
+		// Reuse detection: a rotated token must never be redeemable again.
+		// Revoke the entire family (including the current successor) and drop
+		// any in-memory entry for it.
+		if !t.RotatedAt.IsZero() {
+			_ = s.store.RevokeAuthRefreshTokenFamily(ctx, t.FamilyID)
+			s.mu.Lock()
+			delete(s.refresh, refreshToken)
+			s.mu.Unlock()
+			return nil, op.ErrInvalidRefreshToken
+		}
 		return &refreshTokenRequest{
-			subject:  subject,
-			clientID: clientID,
-			scopes:   scopes,
-			authTime: time.Now(),
+			subject:  t.Subject,
+			clientID: t.ClientID,
+			scopes:   splitCSV(t.Scopes),
+			authTime: t.AuthTime,
 		}, nil
 	}
 	// Fall back to the in-memory map (for tokens minted this process).
@@ -195,6 +259,21 @@ func (s *SQLStore) TokenRequestByRefreshToken(ctx context.Context, refreshToken 
 		return nil, op.ErrInvalidRefreshToken
 	}
 	return r, nil
+}
+
+// splitCSV splits a comma-joined scope string into a slice, dropping empties.
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (s *SQLStore) TerminateSession(_ context.Context, _ string, _ string) error { return nil }
@@ -254,7 +333,9 @@ func (s *SQLStore) AuthorizeClientIDSecret(ctx context.Context, clientID, client
 	if err != nil {
 		return errors.New("client not found")
 	}
-	if c.Secret != clientSecret {
+	// Fail closed: the sentinel and any non-argon2id stored value are rejected
+	// by VerifyClientSecret, and the comparison is constant-time.
+	if !store.VerifyClientSecret(clientSecret, c.Secret) {
 		return errors.New("invalid client secret")
 	}
 	return nil
@@ -291,13 +372,33 @@ func (s *SQLStore) ValidateJWTProfileScopes(_ context.Context, _ string, scopes 
 
 // --- helpers ---
 
-// parseRSAPrivateKey decodes a PEM-encoded RSA private key.
+// parseRSAPrivateKey decodes a PEM-encoded RSA private key. It accepts both
+// PKCS#1 and PKCS#8 encodings, requires a modulus of at least 2048 bits, and
+// rejects any trailing data after the PEM block.
 func parseRSAPrivateKey(pemStr string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemStr))
+	block, rest := pem.Decode([]byte(pemStr))
 	if block == nil {
 		return nil, errors.New("auth: invalid PEM")
 	}
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
+	if strings.TrimSpace(string(rest)) != "" {
+		return nil, errors.New("auth: trailing data after PEM block")
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		var pkcs8 any
+		if pkcs8, err = x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
+			return nil, errors.New("auth: invalid RSA private key")
+		}
+		rsaKey, ok := pkcs8.(*rsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("auth: not an RSA private key")
+		}
+		key = rsaKey
+	}
+	if key.N.BitLen() < 2048 {
+		return nil, errors.New("auth: RSA key too weak (minimum 2048 bits)")
+	}
+	return key, nil
 }
 
 // marshalRSAPrivateKey encodes an RSA private key as PEM.

@@ -12,6 +12,13 @@ import (
 	"github.com/selfagency/sovereign/internal/tenant"
 )
 
+// testIssuer and testAudience are the expected iss/aud used across the wiring
+// tests.
+const (
+	testIssuer   = "https://id.example.com"
+	testAudience = "example.com"
+)
+
 // newTestStores opens temp SQLite + auth stores.
 func newTestStores(t *testing.T) (st *store.Store, as *authstore.Store) {
 	t.Helper()
@@ -36,7 +43,7 @@ func newTestStores(t *testing.T) (st *store.Store, as *authstore.Store) {
 // scopes using the auth store's signing key.
 func mintAccessToken(t *testing.T, as *authstore.Store, subject string, scopes []string) string {
 	t.Helper()
-	tok, err := auth.MintAccessToken(as.SigningKey(), subject, scopes, auth.AccessTokenTTL)
+	tok, err := auth.MintAccessToken(as.SigningKey(), subject, scopes, auth.AccessTokenTTL, testIssuer, testAudience)
 	if err != nil {
 		t.Fatalf("MintAccessToken: %v", err)
 	}
@@ -51,7 +58,7 @@ func TestTokenValidatorRejectsRefreshToken(t *testing.T) {
 	ctx := context.Background()
 	_ = as.PersistRefreshToken(ctx, "refresh-tok", "alice", "client1", []string{"rw"})
 
-	v := &TokenValidator{Key: as.SigningKey()}
+	v := &TokenValidator{Key: as.SigningKey(), Issuer: testIssuer, Audience: testAudience}
 	if _, err := v.ValidateToken(ctx, "refresh-tok"); err == nil {
 		t.Fatal("refresh token accepted as access token — token-type separation violated")
 	}
@@ -63,7 +70,7 @@ func TestTokenValidatorValid(t *testing.T) {
 	ctx := context.Background()
 	tok := mintAccessToken(t, as, "alice", []string{"openid", "profile"})
 
-	v := &TokenValidator{Key: as.SigningKey()}
+	v := &TokenValidator{Key: as.SigningKey(), Issuer: testIssuer, Audience: testAudience}
 	scopes, err := v.ValidateToken(ctx, tok)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
@@ -76,7 +83,7 @@ func TestTokenValidatorValid(t *testing.T) {
 // TestTokenValidatorInvalid verifies an invalid token errors.
 func TestTokenValidatorInvalid(t *testing.T) {
 	_, as := newTestStores(t)
-	v := &TokenValidator{Key: as.SigningKey()}
+	v := &TokenValidator{Key: as.SigningKey(), Issuer: testIssuer, Audience: testAudience}
 	if _, err := v.ValidateToken(context.Background(), "bad"); err == nil {
 		t.Fatal("expected error for invalid token")
 	}
@@ -161,7 +168,7 @@ func TestSubjectValidatorValid(t *testing.T) {
 	ctx := context.Background()
 	tok := mintAccessToken(t, as, "alice", []string{"rw"})
 
-	v := &SubjectValidator{Key: as.SigningKey()}
+	v := &SubjectValidator{Key: as.SigningKey(), Issuer: testIssuer, Audience: testAudience}
 	subject, err := v.ValidateToken(ctx, tok)
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
@@ -174,7 +181,7 @@ func TestSubjectValidatorValid(t *testing.T) {
 // TestSubjectValidatorInvalid verifies invalid/empty tokens error.
 func TestSubjectValidatorInvalid(t *testing.T) {
 	_, as := newTestStores(t)
-	v := &SubjectValidator{Key: as.SigningKey()}
+	v := &SubjectValidator{Key: as.SigningKey(), Issuer: testIssuer, Audience: testAudience}
 	if _, err := v.ValidateToken(context.Background(), "bad"); err == nil {
 		t.Fatal("expected error for invalid token")
 	}
@@ -188,12 +195,12 @@ func TestSubjectValidatorInvalid(t *testing.T) {
 func TestSubjectValidatorWebIDClaim(t *testing.T) {
 	_, as := newTestStores(t)
 	ctx := context.Background()
-	tok, err := auth.MintAccessTokenWebID(as.SigningKey(), "alice", "https://alice.example.com/profile#me", []string{"openid"}, auth.AccessTokenTTL)
+	tok, err := auth.MintAccessTokenWebID(as.SigningKey(), "alice", "https://alice.example.com/profile#me", []string{"openid"}, auth.AccessTokenTTL, testIssuer, testAudience)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	v := &SubjectValidator{Key: as.SigningKey()}
+	v := &SubjectValidator{Key: as.SigningKey(), Issuer: testIssuer, Audience: testAudience}
 	subject, err := v.ValidateToken(ctx, tok)
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +217,7 @@ func TestSubjectValidatorSubFallback(t *testing.T) {
 	ctx := context.Background()
 	tok := mintAccessToken(t, as, "alice", []string{"openid"})
 
-	v := &SubjectValidator{Key: as.SigningKey()}
+	v := &SubjectValidator{Key: as.SigningKey(), Issuer: testIssuer, Audience: testAudience}
 	subject, err := v.ValidateToken(ctx, tok)
 	if err != nil {
 		t.Fatal(err)

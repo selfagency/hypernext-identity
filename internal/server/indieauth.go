@@ -16,12 +16,14 @@ import (
 // indieauthIssuer adapts the auth package's token minting to the IndieAuth
 // TokenIssuer interface.
 type indieauthIssuer struct {
-	key *rsa.PrivateKey
+	key      *rsa.PrivateKey
+	issuer   string
+	audience string
 }
 
 // IssueForProfile mints an access token for an IndieAuth identity URL.
 func (i *indieauthIssuer) IssueForProfile(ctx context.Context, profileURL string, scopes []string) (string, error) {
-	return auth.IssueForProfile(i.key, profileURL, scopes)
+	return auth.IssueForProfile(i.key, profileURL, scopes, i.issuer, i.audience)
 }
 
 // indieAuthSessionStore persists authorization requests between the authorize

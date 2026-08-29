@@ -14,10 +14,10 @@ import (
 // user, and forces the first-login flow: accept ToS, then set up a passkey,
 // then configure the profile. All pages are server-rendered stdlib templates
 // styled with simple.css and restricted to the smolweb element subset.
-func panelHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
+func panelHandler(st *store.Store, key *rsa.PrivateKey, issuer, audience string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/panel", func(w http.ResponseWriter, r *http.Request) {
-		u, ok := sessionUser(r, st, key)
+		u, ok := sessionUser(r, st, key, issuer, audience)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -37,7 +37,7 @@ func panelHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		u, ok := sessionUser(r, st, key)
+		u, ok := sessionUser(r, st, key, issuer, audience)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -56,7 +56,7 @@ func panelHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		u, ok := sessionUser(r, st, key)
+		u, ok := sessionUser(r, st, key, issuer, audience)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -72,7 +72,7 @@ func panelHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		u, ok := sessionUser(r, st, key)
+		u, ok := sessionUser(r, st, key, issuer, audience)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -98,12 +98,12 @@ func panelHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
 }
 
 // sessionUser loads the user from the session cookie, or returns ok=false.
-func sessionUser(r *http.Request, st *store.Store, key *rsa.PrivateKey) (*store.User, bool) {
+func sessionUser(r *http.Request, st *store.Store, key *rsa.PrivateKey, issuer, audience string) (*store.User, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return nil, false
 	}
-	claims, err := auth.ValidateAccessToken(key, c.Value)
+	claims, err := auth.ValidateAccessToken(key, c.Value, issuer, audience)
 	if err != nil {
 		return nil, false
 	}

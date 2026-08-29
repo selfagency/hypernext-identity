@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 )
 
 // Tenant is a single identity + data tenant, keyed by its handle (host).
@@ -37,7 +36,7 @@ const tenantCtxKey ctxKey = 0
 func Middleware(store Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			host := strings.Split(r.Host, ":")[0]
+			host := NormalizeHost(r.Host)
 			t, err := store.FindByHost(r.Context(), host)
 			if err != nil {
 				http.Error(w, "unknown tenant", http.StatusNotFound)

@@ -60,6 +60,22 @@ func TestMiddleware_StripsPortFromHost(t *testing.T) {
 	}
 }
 
+func TestMiddleware_ResolvesIPv6Host(t *testing.T) {
+	store := fakeStore{tenants: map[string]*Tenant{
+		"::1": {ID: "t6", Handle: "::1"},
+	}}
+	var captured *Tenant
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = FromContext(r.Context())
+	})
+	req := httptest.NewRequest("GET", "https://[::1]:8080/", http.NoBody)
+	Middleware(store)(next).ServeHTTP(httptest.NewRecorder(), req)
+
+	if captured == nil || captured.ID != "t6" {
+		t.Fatalf("expected tenant t6 for IPv6 host, got %+v", captured)
+	}
+}
+
 func TestFromContext_EmptyContext(t *testing.T) {
 	if _, ok := FromContext(context.Background()); ok {
 		t.Fatal("expected no tenant in empty context")

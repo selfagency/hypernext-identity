@@ -6,6 +6,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/bluesky-social/indigo v0.0.0-20260826171833-0ae16078d6a6
 	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/ipfs/go-block-format v0.2.0
 	github.com/ipfs/go-blockservice v0.5.2
@@ -38,7 +39,6 @@ require (
 	github.com/go-chi/chi/v5 v5.3.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
