@@ -196,7 +196,7 @@ tasks:
     description: "Introduce versioned sequential migration runner (store currently creates schema directly in store/store.go). Add tables: sessions, idempotency_keys, backup_config, backup_runs, backup_restores, takedowns, tos_documents, pending_deletions (id, user_id, requested_at, status, approved_by, approved_at); add updated_at/version columns on users/public_keys/proof_claims/profile_links."
     wave: 2
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 0
     covers: [P-4, migrations, schema, M2]
     dependencies: []
@@ -224,7 +224,7 @@ tasks:
     description: "Double-submit token (__Host-csrf cookie + X-CSRF-Token header) + Origin/Sec-Fetch-Site enforcement for cookie principals on unsafe methods. ALSO accept the token from a hidden form field (<input name=\"csrf_token\">) for application/x-www-form-urlencoded POSTs (synchronizer-token pattern, rendered server-side) so the no-JS form fallback (D-7) is not broken. Bearer path exempt by design (D-6)."
     wave: 2
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 0
     covers: [P-3, CSRF, security, B1]
     dependencies: []
@@ -253,7 +253,7 @@ tasks:
     description: "Add auth.session.dual_read (default TRUE = accept old JWT cookies AND new session rows, fail-safe against lockout) and api.cors_origins (CORS allowlist, deny-by-default) to internal/server/config.go AND config.example.yml (source of truth per AGENTS.md)."
     wave: 2
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 0
     covers: [config, R3, R2]
     dependencies: []
