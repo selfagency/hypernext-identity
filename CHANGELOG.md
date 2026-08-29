@@ -29,8 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (first-run setup), `internal/licenses` (license reporting), `internal/keys`
   (key parsing/fingerprinting), `internal/protocols/chatfederation` (Matrix/
   XMPP localpart normalization), ActivityPub HTTP-signature verification,
-  `solid.WACChecker` (Web Access Control is not enforced), `backup.Scheduler`
-  + destinations (scheduled backup/restore), `ipfspin.NewPSAClient`
+  `solid.WACChecker` (Web Access Control is not enforced), `backup.Scheduler` +
+  destinations (scheduled backup/restore), `ipfspin.NewPSAClient`
   (pinning-service API mode), and `moderation.ToSGate` (ToS enforcement). The
   atproto PDS is mounted at `/xrpc/` but with a nil Backend/RepoFactory/
   SigningKey, so it is non-functional as wired. The admin backup config form
@@ -45,11 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **BREAKING (strict config):** startup now fails on unknown or removed
   config keys. Operators MUST remove the following keys from `config.yml`
   (or startup aborts):
-  - `identity_host`
-  - `sqlite.mode` and `sqlite.single.path` (the whole `sqlite:` block)
-  - `tls.*` (all keys under `tls:`)
-  - `atproto.*` (all keys under `atproto:`)
-  - `backup.*` (all keys under `backup:`)
+  * `identity_host`
+  * `sqlite.mode` and `sqlite.single.path` (the whole `sqlite:` block)
+  * `tls.*` (all keys under `tls:`)
+  * `atproto.*` (all keys under `atproto:`)
+  * `backup.*` (all keys under `backup:`)
   `ipfs.enabled` remains a valid key and is wired (gates the admin
   `/ipfs/pin` broker); do not remove it.
 * **BREAKING (client-secret invalidation):** all existing plaintext client

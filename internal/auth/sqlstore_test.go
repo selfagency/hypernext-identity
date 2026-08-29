@@ -483,6 +483,7 @@ func TestParseRSAPrivateKeyPKCS8(t *testing.T) {
 // TestParseRSAPrivateKeyRejectsWeak verifies keys with a modulus below 2048
 // bits are rejected.
 func TestParseRSAPrivateKeyRejectsWeak(t *testing.T) {
+	// #nosec G402 -- negative test: verifies the parser rejects a <2048-bit key.
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		t.Fatal(err)
