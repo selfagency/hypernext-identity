@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -48,8 +49,13 @@ func (h *UserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the user in the identity tenant.
+	uid, err := newID()
+	if err != nil {
+		http.Error(w, "create user failed", http.StatusInternalServerError)
+		return
+	}
 	u := &store.User{
-		ID:          newID(),
+		ID:          uid,
 		TenantID:    "identity",
 		Handle:      handle,
 		DisplayName: displayName,
@@ -62,9 +68,18 @@ func (h *UserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate a one-time magic link and persist its hash.
-	raw := newID()
+	raw, err := newID()
+	if err != nil {
+		http.Error(w, "create invite failed", http.StatusInternalServerError)
+		return
+	}
+	itID, err := newID()
+	if err != nil {
+		http.Error(w, "create invite failed", http.StatusInternalServerError)
+		return
+	}
 	it := &store.InviteToken{
-		ID:        newID(),
+		ID:        itID,
 		TokenHash: hashToken(raw),
 		UserID:    u.ID,
 		ExpiresAt: time.Now().Add(inviteTTL),
@@ -90,10 +105,12 @@ func (h *UserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // newID returns a random URL-safe token.
-func newID() string {
+func newID() (string, error) {
 	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if _, err := rand.Reader.Read(b); err != nil {
+		return "", fmt.Errorf("admin: generate id: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // hashToken returns the hex SHA-256 hash of a token.

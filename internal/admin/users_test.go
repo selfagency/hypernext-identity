@@ -2,6 +2,8 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -142,3 +144,21 @@ func TestUserHandlerMethodNotAllowed(t *testing.T) {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}
 }
+
+// TestNewIDPropagatesError verifies newID returns the rand.Read error instead
+// of silently discarding it (the return value is an invite token).
+func TestNewIDPropagatesError(t *testing.T) {
+	orig := rand.Reader
+	rand.Reader = errorReader{}
+	t.Cleanup(func() { rand.Reader = orig })
+
+	if _, err := newID(); err == nil {
+		t.Fatal("newID did not propagate rand.Read error")
+	}
+}
+
+// errorReader is an io.Reader that always fails, used to inject rand.Read
+// failures.
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) { return 0, errors.New("injected rand failure") }

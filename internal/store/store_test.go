@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -235,6 +237,53 @@ func TestDeleteMissingKey(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.DeletePublicKey(context.Background(), "t1", "a1", "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestSQLitePoolLimitSet verifies Open configures an explicit connection pool
+// limit. It fails if the limit is removed, because busy_timeout(5000) in the
+// DSN may otherwise let concurrent writes succeed without it.
+func TestSQLitePoolLimitSet(t *testing.T) {
+	s := newTestStore(t)
+	if got := s.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+}
+
+// TestSQLiteConcurrentWrites verifies N goroutines can write distinct rows
+// concurrently without hitting 'database is locked'.
+func TestSQLiteConcurrentWrites(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = s.CreateTenant(ctx, &Tenant{
+				ID:     fmt.Sprintf("t%d", i),
+				Handle: fmt.Sprintf("alice%d.example.com", i),
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+	}
+
+	// All rows must be present.
+	tenants, err := s.ListTenants(ctx)
+	if err != nil {
+		t.Fatalf("ListTenants: %v", err)
+	}
+	if len(tenants) != n {
+		t.Fatalf("ListTenants = %d rows, want %d", len(tenants), n)
 	}
 }
 

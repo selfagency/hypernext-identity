@@ -21,7 +21,9 @@ func TestMemoryStoreConcurrentAccess(t *testing.T) {
 	}
 	ctx := context.Background()
 	store.AddUser(&User{ID: "u1", Handle: "a.example.com"})
-	store.AddClient(&Client{ID: "c1", Secret: "s1"})
+	if err := store.AddClient(&Client{ID: "c1", Secret: "s1"}); err != nil {
+		t.Fatal(err)
+	}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
@@ -56,7 +58,9 @@ func TestMemoryStoreUserAndClient(t *testing.T) {
 		t.Fatal("expected missing user")
 	}
 
-	store.AddClient(&Client{ID: "c1", Secret: "s1", RedirectURIsList: []string{"https://x/cb"}, Scopes: []string{"openid"}})
+	if err := store.AddClient(&Client{ID: "c1", Secret: "s1", RedirectURIsList: []string{"https://x/cb"}, Scopes: []string{"openid"}}); err != nil {
+		t.Fatal(err)
+	}
 	c, err := store.GetClientByClientID(ctx, "c1")
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +73,34 @@ func TestMemoryStoreUserAndClient(t *testing.T) {
 	}
 }
 
+// TestMemoryStoreClientSecretHashed verifies MemoryStore.AddClient stores an
+// argon2id hash, never the plaintext secret, and that the plaintext verifies
+// against it via AuthorizeClientIDSecret.
+func TestMemoryStoreClientSecretHashed(t *testing.T) {
+	store, err := NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	const secret = "secret-1"
+	if err := store.AddClient(&Client{ID: "c1", Secret: secret}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := store.GetClientByClientID(ctx, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.(*Client).Secret == secret {
+		t.Fatal("client secret stored in plaintext")
+	}
+	if err := store.AuthorizeClientIDSecret(ctx, "c1", secret); err != nil {
+		t.Fatalf("valid secret rejected: %v", err)
+	}
+	if err := store.AuthorizeClientIDSecret(ctx, "c1", "wrong"); err == nil {
+		t.Fatal("wrong secret accepted")
+	}
+}
+
 // TestAuthorizeClientIDSecret verifies client secret auth.
 func TestAuthorizeClientIDSecret(t *testing.T) {
 	store, err := NewMemoryStore()
@@ -76,7 +108,9 @@ func TestAuthorizeClientIDSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	store.AddClient(&Client{ID: "c1", Secret: "secret-1"})
+	if err := store.AddClient(&Client{ID: "c1", Secret: "secret-1"}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := store.AuthorizeClientIDSecret(ctx, "c1", "secret-1"); err != nil {
 		t.Fatalf("valid secret rejected: %v", err)

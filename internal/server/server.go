@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/selfagency/sovereign/internal/admin"
@@ -37,6 +36,7 @@ import (
 // Server is the assembled identity server.
 type Server struct {
 	cfg       *Config
+	version   string
 	store     *store.Store
 	authStore *auth.SQLStore
 	blobs     storage.Backend
@@ -46,8 +46,10 @@ type Server struct {
 }
 
 // New assembles the server from config: opens the SQLite store, builds the
-// blob backend, and wires every protocol handler into a router.
-func New(cfg *Config) (*Server, error) {
+// blob backend, and wires every protocol handler into a router. version is
+// the build-time version constant (e.g. from cmd/sovereign's var version),
+// surfaced in NodeInfo; it is deliberately NOT a Config field.
+func New(cfg *Config, version string) (*Server, error) {
 	logger := newLogger(cfg.Log)
 
 	// Ensure the data directory exists.
@@ -82,7 +84,7 @@ func New(cfg *Config) (*Server, error) {
 		return nil, err
 	}
 
-	s := &Server{cfg: cfg, store: st, authStore: authStore, blobs: blobs, logger: logger}
+	s := &Server{cfg: cfg, version: version, store: st, authStore: authStore, blobs: blobs, logger: logger}
 	// Build the mail sender: SMTP when configured, else the dev logging
 	// fallback so magic links remain testable without a mail server.
 	if cfg.SMTP.Enabled() {
@@ -93,7 +95,9 @@ func New(cfg *Config) (*Server, error) {
 	} else {
 		s.mailer = mail.NewLogSender(logger)
 	}
-	s.buildRouter()
+	if err := s.buildRouter(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -133,6 +137,14 @@ var newS3Backend = func(cfg *Config) (storage.Backend, error) {
 	})
 }
 
+// newAuthProvider is a package-level hook so tests can inject OIDC provider
+// init failures.
+var newAuthProvider = auth.NewProvider
+
+// newWebAuthnHandler is a package-level hook so tests can inject WebAuthn
+// handler init failures.
+var newWebAuthnHandler = auth.NewWebAuthnHandler
+
 // buildBlobBackend constructs the FS or S3 storage backend.
 func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error) {
 	switch cfg.Storage.Backend {
@@ -151,7 +163,7 @@ func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error)
 // buildRouter wires all protocol handlers onto the mux. The OIDC provider is
 // served only on the identity host (id.<domain>); all other hosts serve the
 // protocol mux.
-func (s *Server) buildRouter() {
+func (s *Server) buildRouter() error {
 	mux := http.NewServeMux()
 
 	// Tenant-scoped blob backend resolver. Each tenant's keys are prefixed
@@ -161,10 +173,15 @@ func (s *Server) buildRouter() {
 		return &storage.Prefixed{Backend: s.blobs, Prefix: tenantID}
 	}
 
+	// The OIDC issuer is the identity host (https://id.<domain>); access tokens
+	// are minted and validated against it.
+	identityHost := "id." + s.cfg.Domain
+	issuer := "https://" + identityHost
+
 	// remoteStorage.
 	rs := &remotestorage.Server{
 		Backend: backendFor,
-		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKeyMaterial()},
+		Tokens:  &wiring.TokenValidator{Key: s.authStore.SigningKeyMaterial(), Issuer: issuer, Audience: s.cfg.Audience},
 	}
 	mux.Handle("/rs/", rs)
 
@@ -172,12 +189,11 @@ func (s *Server) buildRouter() {
 	solidSrv := &solid.Server{
 		Backend: backendFor,
 		ACL:     &wiring.ACLChecker{Store: s.store},
-		Tokens:  &wiring.SubjectValidator{Key: s.authStore.SigningKeyMaterial()},
+		Tokens:  &wiring.SubjectValidator{Key: s.authStore.SigningKeyMaterial(), Issuer: issuer, Audience: s.cfg.Audience},
 	}
 	mux.Handle("/solid/", solidSrv)
 
 	// WebFinger.
-	identityHost := "id." + s.cfg.Domain
 	wf := webfinger.Handler(webfinger.Config{
 		IdentityHost: identityHost,
 		StorageRoot:  "https://" + s.cfg.Domain + "/rs/",
@@ -188,9 +204,9 @@ func (s *Server) buildRouter() {
 	// NodeInfo.
 	ni := nodeinfo.Handler(nodeinfo.Config{
 		SoftwareName:      "sovereign",
-		SoftwareVersion:   "0.1.0",
-		Protocols:         []string{"solid", "remotestorage", "atproto"},
-		OpenRegistrations: false,
+		SoftwareVersion:   s.version,
+		Protocols:         []string{"solid", "remotestorage", "atproto", "activitypub"},
+		OpenRegistrations: s.cfg.OpenRegistrations,
 	})
 	mux.Handle("/.well-known/nodeinfo", ni)
 
@@ -218,25 +234,24 @@ func (s *Server) buildRouter() {
 	ipfsBroker := newIPFSBroker(s.store, ipfsBackend)
 
 	// atproto PDS.
-	xrpc := &atproto.XRPCServer{Store: s.store}
+	xrpc := &atproto.XRPCServer{Store: s.store, Issuer: issuer, Audience: s.cfg.Audience}
 	mux.Handle("/xrpc/", xrpc)
 
 	// OIDC provider, served only on the identity host.
-	issuer := "https://" + identityHost
-	provider, err := auth.NewProvider(issuer, s.authStore)
+	provider, err := newAuthProvider(issuer, s.authStore)
 	if err != nil {
-		s.logger.Error("oidc provider init failed", "err", err)
+		return fmt.Errorf("oidc provider init: %w", err)
 	}
 
 	// WebAuthn passkey endpoints, served on the identity host.
-	waHandler, err := auth.NewWebAuthnHandler(identityHost, "Sovereign", "https://"+identityHost, s.store)
+	waHandler, err := newWebAuthnHandler(identityHost, "Sovereign", "https://"+identityHost, s.store)
 	if err != nil {
-		s.logger.Error("webauthn init failed", "err", err)
+		return fmt.Errorf("webauthn init: %w", err)
 	}
 
 	// Admin guard: validates a bearer access token and requires the subject
 	// to be an instance admin. Protects the admin backup + moderation routes.
-	adminGuard := &wiring.AdminGuard{Key: s.authStore.SigningKeyMaterial(), Store: s.store}
+	adminGuard := &wiring.AdminGuard{Key: s.authStore.SigningKeyMaterial(), Store: s.store, Issuer: issuer, Audience: s.cfg.Audience}
 
 	// Admin backup config (GET form / POST apply).
 	backupHandler := &admin.BackupHandler{
@@ -260,7 +275,7 @@ func (s *Server) buildRouter() {
 
 	// IndieAuth bridge, served on the identity host. It mints tokens for an
 	// IndieAuth identity URL via the shared OIDC signing key.
-	iaBridge := indieauth.NewBridge(true, &indieauthIssuer{key: s.authStore.SigningKeyMaterial()})
+	iaBridge := indieauth.NewBridge(true, &indieauthIssuer{key: s.authStore.SigningKeyMaterial(), issuer: issuer, audience: s.cfg.Audience})
 
 	// Host-based dispatch: the identity host serves the OIDC provider and
 	// WebAuthn endpoints; every other host serves the protocol mux.
@@ -287,10 +302,10 @@ func (s *Server) buildRouter() {
 		userHandler := &admin.UserHandler{Store: s.store, Sender: s.mailer, BaseURL: "https://" + identityHost}
 		identity.Handle("/admin/users", adminGuard.Middleware(userHandler))
 		// Magic-link redemption (public, no admin guard).
-		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial()))
+		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
 		// User panel (first-login ToS + passkey + profile).
-		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial()))
-		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial()))
+		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
+		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
 		// IPFS pinning broker, behind the admin guard.
 		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
 		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))
@@ -303,6 +318,7 @@ func (s *Server) buildRouter() {
 
 	// Tenant middleware wraps the whole mux.
 	s.mux = tenant.Middleware(s.tenantStore())(root)
+	return nil
 }
 
 // hostRouter dispatches to the identity handler on the identity host and the
@@ -314,7 +330,7 @@ type hostRouter struct {
 }
 
 func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host := strings.Split(r.Host, ":")[0]
+	host := tenant.NormalizeHost(r.Host)
 	if host == h.identityHost {
 		h.identity.ServeHTTP(w, r)
 		return
@@ -396,15 +412,18 @@ func (s *Server) didDocHandler() http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		// Normalize the resolved handle so the fallback never reflects the
+		// raw request host (B15).
+		th := tenant.NormalizeHost(tn.Handle)
 		did := tn.DID
 		if did == "" {
-			did = "did:web:" + r.Host
+			did = "did:web:" + th
 		}
 		w.Header().Set("Content-Type", "application/did+json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"@context":    []string{"https://www.w3.org/ns/did/v1"},
 			"id":          did,
-			"alsoKnownAs": []string{"https://" + r.Host + "/profile/"},
+			"alsoKnownAs": []string{"https://" + th + "/profile/"},
 		})
 	}
 }

@@ -29,22 +29,25 @@ systems or cryptography expert.
 | NodeInfo | **Shipped** | `/.well-known/nodeinfo` |
 | Public SSH/PGP key hosting (+ WKD path) | **Shipped** | `/keys`, `/.well-known/openpgpkey/` |
 | Keyoxide-style public identity proofs | **Shipped** | `/.well-known/proofs` |
-| Solid Pod (LDP + PATCH + WAC + Solid-OIDC) | **Shipped** | `/solid/` |
+| Solid Pod (LDP + PATCH + Solid-OIDC) | **Partial** | `/solid/` — WAC not enforced |
 | remoteStorage (core read/write + conditionals + folder listing) | **Shipped** | `/rs/` |
-| AT Protocol PDS (repo writes, blobs, sync, sessions) | **Shipped** | `/xrpc/` |
+| AT Protocol PDS (repo writes, blobs, sync, sessions) | **Partial** | `/xrpc/` — mounted with nil Backend/RepoFactory/SigningKey (non-functional as wired) |
 | Profile (content-negotiated h-card / actor / DID doc) | **Shipped** | `/profile/` |
-| ActivityPub (actor document + HTTP-signature verification) | Partial | `internal/protocols/activitypub` |
+| ActivityPub (actor document) | **Partial** | `/profile/` actor doc; HTTP-signature verification not wired |
 | OIDC provider | **Shipped** | identity host `id.<domain>` — discovery/authorize/token/userinfo/jwks |
 | WebAuthn / passkey sign-in | **Shipped** | identity host `/webauthn/register\|login/{begin,finish}` |
 | Admin user creation + magic-link invites | **Shipped** | identity host `/admin/users` (admin-guarded) |
 | Magic-link redemption + user panel | **Shipped** | identity host `/invite/{token}`, `/panel` |
-| Admin backup + moderation | **Shipped** | identity host `/admin/backup`, `/admin/moderation/takedown` (admin-guarded) |
-| Backup / restore | **Shipped** | `internal/backup` — scheduled backups + restore |
+| Admin moderation (takedown) | **Shipped** | identity host `/admin/moderation/takedown` (admin-guarded) |
+| Admin backup config | **Not wired** | identity host `/admin/backup` — Apply is a no-op; Scheduler not wired |
+| Backup / restore | **Not wired** | `internal/backup` — Scheduler + destinations not wired |
 | IndieAuth | **Shipped** | identity host `/indieauth/auth`, `/indieauth/token` |
-| IPFS pinning (optional broker) | **Shipped** | identity host `/ipfs/pin` (admin-guarded) |
+| IPFS pinning (Kubo RPC broker) | **Partial** | identity host `/ipfs/pin` (admin-guarded) — Kubo RPC wired; PSA client mode not wired |
 
-Legend — **Shipped**: live route + tests in CI. **Partial**: a named subset
-works and is tested; the gap is stated. **Planned**: designed, not built.
+Legend — **Shipped**: implemented, wired into the running server, and covered by
+a backing test in CI. **Partial**: wired but a named subset is missing or not
+enforced; the gap is stated. **Not wired**: package-complete and unit-tested in
+isolation, but not mounted on the live server (unreachable over HTTP).
 
 <!--
   claims — machine-readable anchors for `task docs-claims`.
@@ -63,6 +66,14 @@ webfinger | route | /.well-known/webfinger
 nodeinfo | route | /.well-known/nodeinfo
 public-key-hosting | route | /.well-known/openpgpkey/
 identity-proofs | route | /.well-known/proofs
+remotestorage | route | /rs/
+profile | route | /profile/
+oidc-provider | pkg | internal/auth
+webauthn-passkeys | pkg | internal/auth
+admin-user-invites | pkg | internal/admin
+magic-link-panel | pkg | internal/admin
+admin-moderation | pkg | internal/moderation
+indieauth | pkg | internal/protocols/indieauth
 claims -->
 
 ## Quickstart (administrator)

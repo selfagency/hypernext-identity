@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/selfagency/sovereign/internal/store"
+	"github.com/selfagency/sovereign/internal/tenant"
 )
 
 // KeysHandler serves the public key endpoints.
@@ -39,9 +40,14 @@ func (h *KeysHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // never from the URL path — a path handle must not override the host-derived
 // tenant (C4).
 func (h *KeysHandler) serveKeys(w http.ResponseWriter, r *http.Request, keyType string) {
-	// The tenant is the request host (the tenant middleware resolved it).
-	tenantID := strings.Split(r.Host, ":")[0]
-	keys, err := h.Store.ListPublicKeys(r.Context(), tenantID, keyType)
+	// The tenant is resolved by the tenant middleware into the request context;
+	// query with its internal ID, never the host (C4).
+	t, ok := tenant.FromContext(r.Context())
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	keys, err := h.Store.ListPublicKeys(r.Context(), t.ID, keyType)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -64,9 +70,13 @@ func (h *KeysHandler) serveWKD(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	hash := parts[len(parts)-1]
 	_ = hash
-	// Resolve tenant from the host header (WKD is per-domain).
-	tenantID := r.Host
-	keys, err := h.Store.ListPublicKeys(r.Context(), tenantID, "pgp")
+	// Resolve tenant from the request context (WKD is per-domain).
+	t, ok := tenant.FromContext(r.Context())
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	keys, err := h.Store.ListPublicKeys(r.Context(), t.ID, "pgp")
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -85,8 +95,12 @@ func (h *KeysHandler) serveWKD(w http.ResponseWriter, r *http.Request) {
 
 // serveKeysPage serves a human-readable keys page.
 func (h *KeysHandler) serveKeysPage(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.Host
-	keys, err := h.Store.ListPublicKeys(r.Context(), tenantID, "")
+	t, ok := tenant.FromContext(r.Context())
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	keys, err := h.Store.ListPublicKeys(r.Context(), t.ID, "")
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -106,8 +120,12 @@ type ProofsHandler struct {
 
 // ServeHTTP serves the machine-readable verified claims JSON.
 func (h *ProofsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.Host
-	claims, err := h.Store.VerifiedProofClaims(r.Context(), tenantID)
+	t, ok := tenant.FromContext(r.Context())
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	claims, err := h.Store.VerifiedProofClaims(r.Context(), t.ID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

@@ -22,12 +22,14 @@ func setupProvider(t *testing.T) (*Provider, *MemoryStore, string) {
 		t.Fatal(err)
 	}
 	store.AddUser(&User{ID: "user-1", Handle: "alice.example.com", DisplayName: "Alice"})
-	store.AddClient(&Client{
+	if err := store.AddClient(&Client{
 		ID:               "client-1",
 		Secret:           "secret-1",
 		RedirectURIsList: []string{"https://app.example.com/callback"},
 		Scopes:           []string{"openid", "profile", "email"},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	issuer := "https://id.example.com"
 	p, err := NewProvider(issuer, store)

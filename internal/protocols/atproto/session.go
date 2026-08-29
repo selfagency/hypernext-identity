@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -45,7 +46,7 @@ func (s *XRPCServer) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Validate the passkey-authenticated access token.
-	claims, err := auth.ValidateAccessToken(s.SigningKey, in.AccessJwt)
+	claims, err := auth.ValidateAccessToken(s.SigningKey, in.AccessJwt, s.Issuer, s.Audience)
 	if err != nil {
 		writeXRPCError(w, http.StatusUnauthorized, "AuthenticationRequired", "invalid access token")
 		return
@@ -76,19 +77,25 @@ func (s *XRPCServer) mintSessionJWT(did string) (string, error) {
 		return "", err
 	}
 	now := time.Now()
+	id, err := newID()
+	if err != nil {
+		return "", err
+	}
 	claims := atprotoSession{
 		Subject: did,
 		Did:     did,
 		Expiry:  now.Add(atprotoSessionTTL).Unix(),
 		Issued:  now.Unix(),
-		ID:      newID(),
+		ID:      id,
 	}
 	return jwt.Signed(signer).Claims(claims).Serialize()
 }
 
 // newID returns a random hex ID for a JWT jti claim.
-func newID() string {
+func newID() (string, error) {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Reader.Read(b); err != nil {
+		return "", fmt.Errorf("atproto: generate id: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }

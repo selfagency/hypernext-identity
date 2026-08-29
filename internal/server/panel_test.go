@@ -34,7 +34,7 @@ func seedPanelUser(t *testing.T, st *store.Store, key *rsa.PrivateKey, tos, pass
 			t.Fatal(err)
 		}
 	}
-	tok, err := auth.MintAccessToken(key, u.ID, []string{"self"}, auth.AccessTokenTTL)
+	tok, err := auth.MintAccessToken(key, u.ID, []string{"self"}, auth.AccessTokenTTL, "https://id.example.com", "example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestPanelForcesToS(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, _ := seedPanelUser(t, st, key, false, false)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	req := httptest.NewRequest("GET", "/panel", http.NoBody)
 	req.AddCookie(sessionCookieValue(tok))
@@ -76,7 +76,7 @@ func TestPanelForcesPasskey(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, _ := seedPanelUser(t, st, key, true, false)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	req := httptest.NewRequest("GET", "/panel", http.NoBody)
 	req.AddCookie(sessionCookieValue(tok))
@@ -96,7 +96,7 @@ func TestPanelShowsProfile(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, _ := seedPanelUser(t, st, key, true, true)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	req := httptest.NewRequest("GET", "/panel", http.NoBody)
 	req.AddCookie(sessionCookieValue(tok))
@@ -114,7 +114,7 @@ func TestPanelShowsProfile(t *testing.T) {
 // TestPanelNoSession verifies a missing/invalid session is rejected.
 func TestPanelNoSession(t *testing.T) {
 	st := newTestStore(t)
-	h := panelHandler(st, testRSAKey(t))
+	h := panelHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
 	req := httptest.NewRequest("GET", "/panel", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -128,7 +128,7 @@ func TestPanelAcceptToS(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, u := seedPanelUser(t, st, key, false, false)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	form := url.Values{"accept": {"1"}}
 	req := httptest.NewRequest("POST", "/panel/tos", strings.NewReader(form.Encode()))
@@ -151,7 +151,7 @@ func TestPanelSaveProfile(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, _ := seedPanelUser(t, st, key, true, true)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	form := url.Values{"display_name": {"Alice Updated"}, "bio": {"Hello"}}
 	req := httptest.NewRequest("POST", "/panel/profile", strings.NewReader(form.Encode()))
@@ -178,7 +178,7 @@ func TestPanelCompletePasskey(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, u := seedPanelUser(t, st, key, true, false)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	req := httptest.NewRequest("POST", "/panel/passkey", http.NoBody)
 	req.AddCookie(sessionCookieValue(tok))
@@ -198,7 +198,7 @@ func TestPanelCompletePasskey(t *testing.T) {
 // session.
 func TestPanelPasskeyRequiresAuth(t *testing.T) {
 	st := newTestStore(t)
-	h := panelHandler(st, testRSAKey(t))
+	h := panelHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
 	req := httptest.NewRequest("POST", "/panel/passkey", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -213,7 +213,7 @@ func TestPanelEndpointsRejectWrongMethod(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, _ := seedPanelUser(t, st, key, true, true)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	for _, path := range []string{"/panel/tos", "/panel/passkey", "/panel/profile"} {
 		req := httptest.NewRequest("GET", path, http.NoBody)
@@ -230,7 +230,7 @@ func TestPanelEndpointsRejectWrongMethod(t *testing.T) {
 // missing session.
 func TestPanelEndpointsRequireAuth(t *testing.T) {
 	st := newTestStore(t)
-	h := panelHandler(st, testRSAKey(t))
+	h := panelHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
 
 	for _, path := range []string{"/panel/tos", "/panel/passkey", "/panel/profile"} {
 		req := httptest.NewRequest("POST", path, http.NoBody)
@@ -248,7 +248,7 @@ func TestPanelProfileBadForm(t *testing.T) {
 	st := newTestStore(t)
 	key := testRSAKey(t)
 	tok, _ := seedPanelUser(t, st, key, true, true)
-	h := panelHandler(st, key)
+	h := panelHandler(st, key, "https://id.example.com", "example.com")
 
 	req := httptest.NewRequest("POST", "/panel/profile", strings.NewReader("%zz"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

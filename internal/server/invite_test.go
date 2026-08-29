@@ -51,7 +51,7 @@ func TestInviteValidToken(t *testing.T) {
 	seedInviteUser(t, st, raw)
 	key := testRSAKey(t)
 
-	h := inviteHandler(st, key)
+	h := inviteHandler(st, key, "https://id.example.com", "example.com")
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -80,7 +80,7 @@ func TestInviteValidToken(t *testing.T) {
 // TestInviteUnknownToken verifies an unknown token returns 404.
 func TestInviteUnknownToken(t *testing.T) {
 	st := newTestStore(t)
-	h := inviteHandler(st, testRSAKey(t))
+	h := inviteHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
 	req := httptest.NewRequest("GET", "/invite/unknown", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -92,7 +92,7 @@ func TestInviteUnknownToken(t *testing.T) {
 // TestInviteMissingToken verifies an empty token returns 400.
 func TestInviteMissingToken(t *testing.T) {
 	st := newTestStore(t)
-	h := inviteHandler(st, testRSAKey(t))
+	h := inviteHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
 	req := httptest.NewRequest("GET", "/invite/", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -118,7 +118,7 @@ func TestInviteExpiredToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := inviteHandler(st, testRSAKey(t))
+	h := inviteHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -147,7 +147,7 @@ func TestInviteUsedToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := inviteHandler(st, testRSAKey(t))
+	h := inviteHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -164,7 +164,7 @@ func TestInviteSessionCookieValid(t *testing.T) {
 	u := seedInviteUser(t, st, raw)
 	key := testRSAKey(t)
 
-	h := inviteHandler(st, key)
+	h := inviteHandler(st, key, "https://id.example.com", "example.com")
 	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -178,11 +178,56 @@ func TestInviteSessionCookieValid(t *testing.T) {
 	if tok == "" {
 		t.Fatal("no session cookie")
 	}
-	claims, err := auth.ValidateAccessToken(key, tok)
+	claims, err := auth.ValidateAccessToken(key, tok, "https://id.example.com", "example.com")
 	if err != nil {
 		t.Fatalf("ValidateAccessToken: %v", err)
 	}
 	if claims.Subject != u.ID {
 		t.Fatalf("session subject = %q, want %q", claims.Subject, u.ID)
+	}
+}
+
+// TestInviteDeletedUserRejected verifies a token referencing a deleted (or
+// non-existent) user does not mint a session.
+func TestInviteDeletedUserRejected(t *testing.T) {
+	st := newTestStore(t)
+	raw := "ghosttoken"
+	ctx := context.Background()
+	if err := st.CreateTenant(ctx, &store.Tenant{ID: "identity", Handle: "id.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	// Insert a token referencing a user that does not exist (deleted). The
+	// FK constraint normally blocks this, so disable FK enforcement on a
+	// dedicated connection to simulate a dangling token.
+	conn, err := st.DB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO invite_tokens (id, token_hash, user_id, expires_at) VALUES (?, ?, ?, ?)`,
+		"inv1", hashToken(raw), "ghost", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	// Return the connection to the pool (it retains foreign_keys=OFF) so the
+	// handler can acquire it.
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	h := inviteHandler(st, testRSAKey(t), "https://id.example.com", "example.com")
+	req := httptest.NewRequest("GET", "/invite/"+raw, http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusFound {
+		t.Fatal("minted session for deleted user")
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" {
+			t.Fatal("session cookie set for deleted user")
+		}
 	}
 }

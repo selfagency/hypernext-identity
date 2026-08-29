@@ -32,6 +32,51 @@ func TestMigrationRunner(t *testing.T) {
 	}
 }
 
+// TestMigrationInvalidatesPlaintextSecrets verifies migration v5 replaces
+// pre-v5 plaintext client secrets with the sentinel, making them unverifiable.
+func TestMigrationInvalidatesPlaintextSecrets(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "test.db")
+
+	// Open a store (all migrations run, including v5), insert a plaintext
+	// client secret directly, then remove the v5 (and any later) schema_version
+	// rows so the reopen re-runs v5 against the plaintext row — simulating a
+	// pre-v5 DB.
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s1.db.ExecContext(ctx,
+		`INSERT INTO clients (id, secret, redirect_uris, scopes) VALUES (?, ?, ?, ?)`,
+		"legacy", "plaintext-secret", "", ""); err != nil {
+		t.Fatalf("insert legacy client: %v", err)
+	}
+	if _, err := s1.db.ExecContext(ctx, `DELETE FROM schema_version WHERE version >= 5`); err != nil {
+		t.Fatalf("remove v5+ markers: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen: migration v5 runs and invalidates the plaintext secret.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	c, err := s2.ClientByID(ctx, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Secret != invalidatedSecret {
+		t.Fatalf("secret = %q, want sentinel %q", c.Secret, invalidatedSecret)
+	}
+	if VerifyClientSecret("plaintext-secret", c.Secret) {
+		t.Fatal("invalidated plaintext secret still verifies")
+	}
+}
+
 // TestMigrationIdempotent verifies reopening an existing DB does not re-run
 // migrations or lose data.
 func TestMigrationIdempotent(t *testing.T) {

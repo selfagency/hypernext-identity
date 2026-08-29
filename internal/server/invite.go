@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -19,36 +20,40 @@ const sessionCookie = "session"
 // sessionTTL is the lifetime of a magic-link session access token.
 const sessionTTL = 15 * time.Minute
 
-// inviteHandler validates a one-time magic-link token, marks it used, mints a
-// short-lived session access token (subject = user ID), sets it as an HttpOnly
-// cookie, and redirects to the user panel.
-func inviteHandler(st *store.Store, key *rsa.PrivateKey) http.Handler {
+// inviteHandler validates a one-time magic-link token, atomically marks it
+// used, mints a short-lived session access token (subject = user ID), sets it
+// as an HttpOnly cookie, and redirects to the user panel.
+func inviteHandler(st *store.Store, key *rsa.PrivateKey, issuer, audience string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := strings.TrimPrefix(r.URL.Path, "/invite/")
 		if raw == "" {
 			http.Error(w, "missing token", http.StatusBadRequest)
 			return
 		}
+		// Atomic single-use gate: exactly one concurrent redemption succeeds.
+		if err := st.RedeemInviteToken(r.Context(), hashToken(raw), time.Now()); err != nil {
+			switch {
+			case errors.Is(err, store.ErrInviteUsed), errors.Is(err, store.ErrInviteExpired):
+				http.Error(w, "invite unavailable", http.StatusGone)
+			default:
+				http.NotFound(w, r)
+			}
+			return
+		}
+		// Fetch the invited user ID for session minting.
 		it, err := st.InviteTokenByHash(r.Context(), hashToken(raw))
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
-		if !it.UsedAt.IsZero() {
-			http.Error(w, "invite already used", http.StatusGone)
-			return
-		}
-		if time.Now().After(it.ExpiresAt) {
-			http.Error(w, "invite expired", http.StatusGone)
-			return
-		}
-		// Mark used (single-use).
-		if err := st.MarkInviteTokenUsed(r.Context(), it.ID); err != nil {
-			http.Error(w, "mark invite used: "+err.Error(), http.StatusInternalServerError)
+		// Reject tokens whose user was deleted: never mint a session for a
+		// non-existent subject.
+		if _, err := st.UserByID(r.Context(), it.UserID); err != nil {
+			http.Error(w, "invite unavailable", http.StatusGone)
 			return
 		}
 		// Mint a short-lived session access token for the invited user.
-		tok, err := auth.MintAccessToken(key, it.UserID, []string{"self"}, sessionTTL)
+		tok, err := auth.MintAccessToken(key, it.UserID, []string{"self"}, sessionTTL, issuer, audience)
 		if err != nil {
 			http.Error(w, "mint session: "+err.Error(), http.StatusInternalServerError)
 			return

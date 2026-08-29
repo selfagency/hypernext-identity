@@ -103,11 +103,10 @@ func TestE2EGracefulShutdown(t *testing.T) {
 	cfg.DataDir = t.TempDir()
 	cfg.Domain = "example.com"
 	cfg.Storage.Backend = "fs"
-	cfg.SQLite.Mode = "single"
 	cfg.Log.Level = "info"
 	cfg.Log.Format = "text"
 
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -143,11 +142,10 @@ func TestRunListenError(t *testing.T) {
 	cfg.DataDir = t.TempDir()
 	cfg.Domain = "example.com"
 	cfg.Storage.Backend = "fs"
-	cfg.SQLite.Mode = "single"
 	cfg.Log.Level = "info"
 	cfg.Log.Format = "text"
 
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -172,11 +170,10 @@ func TestServeServeError(t *testing.T) {
 	cfg.DataDir = t.TempDir()
 	cfg.Domain = "example.com"
 	cfg.Storage.Backend = "fs"
-	cfg.SQLite.Mode = "single"
 	cfg.Log.Level = "info"
 	cfg.Log.Format = "text"
 
-	srv, err := New(cfg)
+	srv, err := New(cfg, "dev")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

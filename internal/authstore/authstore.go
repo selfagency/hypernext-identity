@@ -65,15 +65,31 @@ func New(ctx context.Context, mem *auth.MemoryStore, s *store.Store) (*Store, er
 	return &Store{mem: mem, store: s}, nil
 }
 
-// parseRSAPrivate decodes a PEM-encoded RSA private key.
+// parseRSAPrivate decodes a PEM-encoded RSA private key. It accepts both
+// PKCS#1 and PKCS#8 encodings, requires a modulus of at least 2048 bits, and
+// rejects any trailing data after the PEM block.
 func parseRSAPrivate(pemStr string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemStr))
+	block, rest := pem.Decode([]byte(pemStr))
 	if block == nil {
 		return nil, errors.New("authstore: invalid PEM")
 	}
+	if strings.TrimSpace(string(rest)) != "" {
+		return nil, errors.New("authstore: trailing data after PEM block")
+	}
 	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, err
+		var pkcs8 any
+		if pkcs8, err = x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
+			return nil, errors.New("authstore: invalid RSA private key")
+		}
+		rsaKey, ok := pkcs8.(*rsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("authstore: not an RSA private key")
+		}
+		key = rsaKey
+	}
+	if key.N.BitLen() < 2048 {
+		return nil, errors.New("authstore: RSA key too weak (minimum 2048 bits)")
 	}
 	return key, nil
 }

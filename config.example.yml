@@ -5,9 +5,9 @@
 # Tenant handles live on subdomains of this (alice.example.com).
 domain: example.com
 
-# Where the identity server itself is served (OIDC issuer, admin UI).
-# Defaults to "id.<domain>".
-# identity_host: id.example.com
+# Audience claim for signed access tokens (the configured audience).
+# Defaults to the base domain.
+# audience: example.com
 
 # Data directory: sqlite files, blobs, keys, certmagic cache.
 data_dir: ./data
@@ -24,43 +24,23 @@ storage:
   #   secret_key: ...
   #   region: us-east-1
 
-# SQLite: one file per tenant (WAL mode). Per-tenant isolates write contention.
-sqlite:
-  mode: per_tenant   # per_tenant | single
-  # single:
-  #   path: ./data/identity.db
-
-# TLS / ACME (wildcard cert for tenant subdomains). Uses certmagic.
-tls:
-  enabled: true
-  email: admin@example.com
-  # dns_provider: cloudflare   # required for wildcard certs (DNS-01)
-  # dns_api_token_env: CLOUDFLARE_API_TOKEN
-
-# IPFS integration (optional, off by default). Broker mode — no embedded node.
+# IPFS pinning broker (optional, off by default). Broker mode — no embedded node.
 ipfs:
   enabled: false
-  # mode: kubo-rpc | pinning-service
-  # kubo_rpc_url: http://127.0.0.1:5001
-  # pinning_service:
-  #   endpoint: https://api.pinata.cloud/psa
-  #   token: ...
-  # gateway: https://ipfs.io
 
-# atproto PDS
-atproto:
-  # did method for new accounts: plc (default) | web
-  did_method: plc
-  # PLC directory endpoint (only used when did_method=plc)
-  plc_endpoint: https://plc.directory
-
-# Backup schedule (also configurable via admin UI)
-backup:
-  # cron_expr: "0 3 * * *"
-  # destination_type: fs | s3
-  # destination_config: '{"path":"./data/backups"}'
+# Outbound email via stdlib net/smtp. Omitted/empty disables sending.
+smtp:
+  host: smtp.example.com
+  port: 587
+  # username: ...
+  # password: ...
+  # from: no-reply@example.com
+  # tls: true   # STARTTLS
 
 # Logging
 log:
   level: info   # debug | info | warn | error
   format: text  # text | json
+
+# Allow anyone to self-register an account. Defaults to false (invite-only).
+# open_registrations: false

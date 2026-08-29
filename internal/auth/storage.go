@@ -10,6 +10,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
+
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // User is a tenant identity that can authenticate via OIDC and hold
@@ -160,11 +163,18 @@ func (s *MemoryStore) SigningKeyMaterial() *rsa.PrivateKey {
 	return s.signing.key
 }
 
-// AddClient registers an OIDC client.
-func (s *MemoryStore) AddClient(c *Client) {
+// AddClient registers an OIDC client. The secret is stored as an argon2id
+// hash (via the same helper as the SQL store), never plaintext.
+func (s *MemoryStore) AddClient(c *Client) error {
+	hash, err := store.HashClientSecret(c.Secret)
+	if err != nil {
+		return err
+	}
+	c.Secret = hash
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clients[c.ID] = c
+	return nil
 }
 
 // UserByID returns a user by ID.
@@ -181,8 +191,12 @@ func (s *MemoryStore) Health(_ context.Context) error { return nil }
 // --- op.AuthStorage ---
 
 func (s *MemoryStore) CreateAuthRequest(_ context.Context, req *oidc.AuthRequest, _ string) (op.AuthRequest, error) {
+	id, err := newID()
+	if err != nil {
+		return nil, err
+	}
 	ar := &authRequest{
-		id:           newID(),
+		id:           id,
 		clientID:     req.ClientID,
 		scopes:       req.Scopes,
 		redirectURI:  req.RedirectURI,
@@ -237,12 +251,22 @@ func (s *MemoryStore) DeleteAuthRequest(_ context.Context, id string) error {
 }
 
 func (s *MemoryStore) CreateAccessToken(_ context.Context, _ op.TokenRequest) (string, time.Time, error) {
-	return newID(), time.Now().Add(time.Hour), nil
+	id, err := newID()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return id, time.Now().Add(time.Hour), nil
 }
 
 func (s *MemoryStore) CreateAccessAndRefreshTokens(ctx context.Context, request op.TokenRequest, _ string) (string, string, time.Time, error) {
-	access := newID()
-	refresh := newID()
+	access, err := newID()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	refresh, err := newID()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
 	// Persist the refresh token so TokenRequestByRefreshToken can resolve it.
 	s.mu.Lock()
 	s.refresh[refresh] = &refreshTokenRequest{
@@ -319,7 +343,9 @@ func (s *MemoryStore) AuthorizeClientIDSecret(_ context.Context, clientID, clien
 	if !ok {
 		return errors.New("client not found")
 	}
-	if c.Secret != clientSecret {
+	// Fail closed: the sentinel and any non-argon2id stored value are rejected
+	// by VerifyClientSecret, and the comparison is constant-time.
+	if !store.VerifyClientSecret(clientSecret, c.Secret) {
 		return errors.New("invalid client secret")
 	}
 	return nil
@@ -389,10 +415,12 @@ func (c *Client) ClockSkew() time.Duration             { return 0 }
 
 // --- helpers ---
 
-func newID() string {
+func newID() (string, error) {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if _, err := rand.Reader.Read(b); err != nil {
+		return "", fmt.Errorf("auth: generate id: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // generateRSAKey creates an RSA-2048 signing key for ID/access tokens.

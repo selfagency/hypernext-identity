@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
+
+	"github.com/selfagency/sovereign/internal/server"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // TestRunHelp verifies the root command succeeds with --help.
@@ -58,6 +63,30 @@ func TestRunServeValidConfig(t *testing.T) {
 	}
 	if got.DataDir != dir {
 		t.Fatalf("data_dir = %q, want %q", got.DataDir, dir)
+	}
+}
+
+// TestConfigRejectsUnknownKeysViper verifies the Viper path (loadServerConfig)
+// rejects an unknown config key via the ErrorUnused decoder option.
+func TestConfigRejectsUnknownKeysViper(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	cfg := "domain: example.com\ndata_dir: " + dir + "\nbogus_key: true\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	v := viper.New()
+	v.SetConfigFile(cfgPath)
+	if err := v.ReadInConfig(); err != nil {
+		t.Fatalf("ReadInConfig: %v", err)
+	}
+	_, err := loadServerConfig(v)
+	if err == nil {
+		t.Fatal("loadServerConfig with unknown key = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "bogus_key") {
+		t.Fatalf("error %q does not name the unknown key", err)
 	}
 }
 
@@ -135,5 +164,100 @@ func TestRunMainError(t *testing.T) {
 
 	if code := runMain([]string{"x"}); code != 1 {
 		t.Fatalf("runMain with error = %d, want 1", code)
+	}
+}
+
+// TestRunServer verifies runServer starts the server and shuts down cleanly
+// when the context is cancelled. A pre-cancelled context exercises the full
+// listen -> graceful-shutdown path without blocking.
+func TestRunServer(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &server.Config{
+		Domain:  "example.com",
+		DataDir: dir,
+		Storage: server.StorageConfig{Backend: "fs"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel so Run returns immediately after graceful shutdown
+
+	if err := runServer(ctx, cfg, "127.0.0.1:0"); err != nil {
+		t.Fatalf("runServer = %v, want nil", err)
+	}
+}
+
+// TestRunServerInvalidConfig verifies runServer propagates a server.New error
+// (here an invalid storage backend) rather than panicking.
+func TestRunServerInvalidConfig(t *testing.T) {
+	cfg := &server.Config{
+		Domain:  "example.com",
+		DataDir: t.TempDir(),
+		Storage: server.StorageConfig{Backend: "bogus"},
+	}
+	if err := runServer(context.Background(), cfg, "127.0.0.1:0"); err == nil {
+		t.Fatal("runServer with invalid backend = nil, want error")
+	}
+}
+
+// TestSetSecretCmd verifies the clients set-secret subcommand re-registers a
+// client secret and prints the new secret once.
+func TestSetSecretCmd(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(cfgPath, []byte("domain: example.com\ndata_dir: "+dir+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-create a client in the store the command will open.
+	st, err := store.Open(filepath.Join(dir, "identity.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateClient(context.Background(), &store.Client{
+		ID:     "client1",
+		Secret: "old-secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runFn([]string{"clients", "set-secret", "client1", "--config", cfgPath}); err != nil {
+		t.Fatalf("set-secret = %v, want nil", err)
+	}
+
+	// Reopen and verify the secret was re-registered (non-empty hash).
+	st2, err := store.Open(filepath.Join(dir, "identity.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st2.Close() }()
+	c, err := st2.ClientByID(context.Background(), "client1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Secret == "" || c.Secret == "old-secret" {
+		t.Fatalf("client secret not re-registered: %q", c.Secret)
+	}
+}
+
+// TestSetSecretCmdUnknownClient verifies set-secret errors for a client that
+// does not exist.
+func TestSetSecretCmdUnknownClient(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(cfgPath, []byte("domain: example.com\ndata_dir: "+dir+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runFn([]string{"clients", "set-secret", "nope", "--config", cfgPath}); err == nil {
+		t.Fatal("set-secret for unknown client = nil, want error")
+	}
+}
+
+// TestSetSecretCmdWrongArgs verifies set-secret rejects a missing client ID.
+func TestSetSecretCmdWrongArgs(t *testing.T) {
+	if err := runFn([]string{"clients", "set-secret"}); err == nil {
+		t.Fatal("set-secret with no args = nil, want error")
 	}
 }

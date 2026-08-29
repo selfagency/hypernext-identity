@@ -2,6 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -245,6 +250,146 @@ func TestSQLStoreRevoke(t *testing.T) {
 	}
 }
 
+// TestRefreshTokenExpiryEnforced verifies an expired refresh token is rejected on
+// redemption. CreateAccessAndRefreshTokens must populate expires_at (30-day TTL)
+// so that expiry is enforced; the persisted (expired) record must take precedence
+// over the in-memory fallback.
+func TestRefreshTokenExpiryEnforced(t *testing.T) {
+	ctx := context.Background()
+	st := newSQLTestStore(t)
+	s, err := NewSQLStore(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, refresh, _, err := s.CreateAccessAndRefreshTokens(ctx, &testTokenRequest{
+		subject: "alice", audience: []string{"web"}, scopes: []string{"openid"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Backdate the persisted expiry so the token is now expired, even though it
+	// still exists in the in-memory map.
+	if _, err := st.DB().ExecContext(ctx,
+		`UPDATE auth_refresh_tokens SET expires_at = ? WHERE token = ?`,
+		time.Now().Add(-time.Hour), hashToken(refresh)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TokenRequestByRefreshToken(ctx, refresh); err == nil {
+		t.Fatal("expired refresh token accepted")
+	}
+}
+
+// TestRefreshTokenRotation verifies a redeemed refresh token is rotated: the
+// client receives a fresh token and the old token can no longer be used.
+func TestRefreshTokenRotation(t *testing.T) {
+	ctx := context.Background()
+	st := newSQLTestStore(t)
+	s, err := NewSQLStore(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, refresh1, _, err := s.CreateAccessAndRefreshTokens(ctx, &testTokenRequest{
+		subject: "alice", audience: []string{"web"}, scopes: []string{"openid"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Redeem refresh1; the oidc library then mints the successor token.
+	req, err := s.TokenRequestByRefreshToken(ctx, refresh1)
+	if err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+	_, refresh2, _, err := s.CreateAccessAndRefreshTokens(ctx, req, refresh1)
+	if err != nil {
+		t.Fatalf("mint successor: %v", err)
+	}
+	if refresh2 == refresh1 {
+		t.Fatal("rotation reused the same refresh token")
+	}
+
+	// The new token is usable before the old token is replayed.
+	if _, err := s.TokenRequestByRefreshToken(ctx, refresh2); err != nil {
+		t.Fatalf("new refresh token rejected: %v", err)
+	}
+
+	// Replaying the rotated (old) token must be rejected.
+	if _, err := s.TokenRequestByRefreshToken(ctx, refresh1); err == nil {
+		t.Fatal("old rotated refresh token still accepted")
+	}
+}
+
+// TestRefreshTokenReuseDetected verifies redeeming an already-rotated token
+// (reuse) revokes the entire family, including the current successor token.
+func TestRefreshTokenReuseDetected(t *testing.T) {
+	ctx := context.Background()
+	st := newSQLTestStore(t)
+	s, err := NewSQLStore(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, refresh1, _, err := s.CreateAccessAndRefreshTokens(ctx, &testTokenRequest{
+		subject: "alice", audience: []string{"web"}, scopes: []string{"openid"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := s.TokenRequestByRefreshToken(ctx, refresh1)
+	if err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+	_, refresh2, _, err := s.CreateAccessAndRefreshTokens(ctx, req, refresh1)
+	if err != nil {
+		t.Fatalf("mint successor: %v", err)
+	}
+
+	// Reuse: redeeming the rotated refresh1 again must revoke the family,
+	// which also invalidates the current token refresh2.
+	if _, err := s.TokenRequestByRefreshToken(ctx, refresh1); err == nil {
+		t.Fatal("reused rotated refresh token accepted")
+	}
+	if _, err := s.TokenRequestByRefreshToken(ctx, refresh2); err == nil {
+		t.Fatal("family not revoked: successor token still accepted after reuse")
+	}
+}
+
+// TestRefreshTokenReuseDetectedInMemory verifies the in-memory fallback cannot
+// resurrect a rotated token. On rotation the old token's in-memory entry must be
+// deleted (mirroring RevokeToken); otherwise a replay that bypasses the store
+// would succeed.
+func TestRefreshTokenReuseDetectedInMemory(t *testing.T) {
+	ctx := context.Background()
+	st := newSQLTestStore(t)
+	s, err := NewSQLStore(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, refresh1, _, err := s.CreateAccessAndRefreshTokens(ctx, &testTokenRequest{
+		subject: "alice", audience: []string{"web"}, scopes: []string{"openid"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := s.TokenRequestByRefreshToken(ctx, refresh1)
+	if err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+	if _, _, _, err := s.CreateAccessAndRefreshTokens(ctx, req, refresh1); err != nil {
+		t.Fatalf("mint successor: %v", err)
+	}
+
+	// Force the in-memory path: drop the persisted row so the fallback map is
+	// the only place the old token could survive. On rotation its map entry
+	// must already be gone, so the replay is rejected.
+	if _, err := st.DB().ExecContext(ctx,
+		`DELETE FROM auth_refresh_tokens WHERE token = ?`, hashToken(refresh1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TokenRequestByRefreshToken(ctx, refresh1); err == nil {
+		t.Fatal("rotated refresh token resurrected via in-memory fallback")
+	}
+}
+
 // TestSQLStoreHealth verifies Health is a no-op success.
 func TestSQLStoreHealth(t *testing.T) {
 	st := newSQLTestStore(t)
@@ -312,3 +457,75 @@ func TestSQLStoreUserinfoNoops(t *testing.T) {
 		t.Fatalf("ValidateJWTProfileScopes = %v, %v", scopes, err)
 	}
 }
+
+// TestParseRSAPrivateKeyPKCS8 verifies a PKCS#8-encoded RSA private key is
+// accepted in addition to PKCS#1.
+func TestParseRSAPrivateKeyPKCS8(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+
+	got, err := parseRSAPrivateKey(pemStr)
+	if err != nil {
+		t.Fatalf("parseRSAPrivateKey(PKCS#8): %v", err)
+	}
+	if got.N.Cmp(key.N) != 0 {
+		t.Fatal("parsed key modulus mismatch")
+	}
+}
+
+// TestParseRSAPrivateKeyRejectsWeak verifies keys with a modulus below 2048
+// bits are rejected.
+func TestParseRSAPrivateKeyRejectsWeak(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}))
+	if _, err := parseRSAPrivateKey(pemStr); err == nil {
+		t.Fatal("weak (<2048-bit) key accepted")
+	}
+}
+
+// TestParseRSAPrivateKeyRejectsTrailing verifies data after the PEM block is
+// rejected.
+func TestParseRSAPrivateKeyRejectsTrailing(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})) + "\ntrailing garbage\n"
+	if _, err := parseRSAPrivateKey(pemStr); err == nil {
+		t.Fatal("trailing data after PEM block accepted")
+	}
+}
+
+// TestNewIDPropagatesError verifies newID returns the rand.Read error instead
+// of silently discarding it.
+func TestNewIDPropagatesError(t *testing.T) {
+	orig := rand.Reader
+	rand.Reader = errorReader{}
+	t.Cleanup(func() { rand.Reader = orig })
+
+	if _, err := newID(); err == nil {
+		t.Fatal("newID did not propagate rand.Read error")
+	}
+}
+
+// errorReader is an io.Reader that always fails, used to inject rand.Read
+// failures.
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) { return 0, errors.New("injected rand failure") }

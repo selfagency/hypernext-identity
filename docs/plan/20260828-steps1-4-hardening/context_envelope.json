@@ -1,0 +1,103 @@
+{
+  "plan_id": "20260828-steps1-4-hardening",
+  "objective": "Implement remediation Steps 1-4 from the exhaustive code review of sovereign@edc4ed1: (1) fail-closed startup + truthful docs, (2) tenant identity resolution, (3) atomicity races, (4) auth primitive hardening.",
+  "complexity": "HIGH",
+  "repo": "github.com/selfagency/sovereign",
+  "branch": "main",
+  "base_commit": "edc4ed1",
+  "go_version": "1.27",
+  "cgo": "CGO_ENABLED=0",
+  "review_source": "Exhaustive Code Review (user-provided, branch main @ edc4ed1)",
+  "review_recommendation": "BLOCK UNTIL FIXED. Steps 1-4 are the minimum merge bar.",
+  "scope_decision": "User approved Steps 1-4 only. Steps 5-8 (web-surface security, storage correctness, wire-or-delete dead features, typing hygiene) are OUT OF SCOPE for this pass.",
+  "tech_stack": {
+    "language": "Go 1.27",
+    "sqlite": "modernc.org/sqlite (pure-Go, CGO-free)",
+    "oidc": "zitadel/oidc/v3",
+    "webauthn": "go-webauthn/webauthn",
+    "pgp": "ProtonMail/go-crypto",
+    "ssh": "golang.org/x/crypto/ssh",
+    "atproto": "bluesky-social/indigo",
+    "s3": "minio-go",
+    "config": "viper",
+    "router": "stdlib net/http (smolweb subset)"
+  },
+  "constraints": [
+    "CGO_ENABLED=0 always",
+    "GPL-3.0-or-later compatible deps only",
+    "80% coverage gate (scripts/coverage-gate.sh)",
+    "TDD mandatory: failing test first",
+    "Fail closed, defense in depth",
+    "Tenant-scoping: every store query and route touching tenant data scoped by tenant_id",
+    "No panics in request-path code",
+    "Error style: lowercase, prefixed \"<pkg>: message\", wrapped with %w",
+    "Interface satisfaction assertions: var _ SomeInterface = (*Impl)(nil)",
+    "Adapters live in wiring/, not inline in server/",
+    "config.example.yml is source of truth for config shape; keep in sync with internal/server/config.go",
+    "migrations/ exists but empty; store creates schema directly (store/store.go)",
+    "Multi-tenant SQLite defaults to per_tenant mode; single mode exists"
+  ],
+  "conventions": [
+    "Package doc comment at top of primary file in each package",
+    "Table-driven tests preferred",
+    "Real fixtures over mocks where feasible",
+    "Race detector part of normal test run: task test runs go test ./... -race -cover",
+    "Security-relevant packages need explicit negative tests",
+    "Narrow, commented exclusions in .golangci.yml only"
+  ],
+  "architecture_snapshot": {
+    "server_assembly": "internal/server/server.go: New() -> buildRouter() -> Serve(). buildRouter has no error return (A1 root cause).",
+    "tenant_resolution": "internal/tenant/resolver.go:40 host->tenant. internal/endpoints/endpoints.go:43,68,88,109 use r.Host as tenantID (A2 bug).",
+    "auth": "internal/auth/access_token.go (ValidateAccessToken, MintAccessTokenWebID). internal/auth/sqlstore.go (AuthorizeClientIDSecret, CreateAccessAndRefreshTokens). internal/store/auth.go (client CRUD, refresh-token CRUD, CreateUser, InviteTokenByHash, MarkInviteTokenUsed).",
+    "invite_flow": "internal/server/invite.go + internal/store/auth.go. Read-check-update across 3 statements, no transaction (B7).",
+    "first_admin": "internal/store/auth.go CreateUser: SELECT COUNT(*) FROM users then insert, no transaction, unscoped by tenant (B8).",
+    "s3": "internal/server/server.go:125-134 newS3Backend; internal/storage/s3.go:20-37 S3Config.Secure never set (B1).",
+    "sqlite_conns": "internal/store/store.go: no SetMaxOpenConns/SetMaxIdleConns/SetConnMaxLifetime (D5)."
+  },
+  "findings_in_scope": {
+    "step1": ["A1", "F1", "F4", "F3"],
+    "step2": ["A2", "B16", "B15", "A5"],
+    "step3": ["B7", "B8", "D5"],
+    "step4": ["B3", "B4", "E2", "E3"]
+  },
+  "findings_out_of_scope": ["A3", "A4", "A5", "A6", "A7", "A8", "B2", "B5", "B6", "B9", "B10", "B11", "B12", "B13", "B14", "C1", "C2", "D1", "D2", "D3", "D4", "E1", "G"],
+  "note": "A5 (atproto blob empty tenant prefix) is listed in the review under Step 2 but atproto wiring (A4) is out of scope. A5 fix depends on A4 wiring. Treat A5 as DEFERRED with Step 7 (wire-or-delete atproto). Do not attempt A5 in isolation.",
+  "breaking_changes_expected": [
+    "Step 1: strict config parsing will reject existing deployments' configs (document in CHANGELOG as breaking)",
+    "Step 4: existing plaintext client secrets and no-exp tokens invalidated (requires migration + documented operator step)"
+  ],
+  "verification_gates": [
+    "task lint passes (0 issues)",
+    "task test passes under -race",
+    "task vet passes",
+    "task vulncheck passes",
+    "scripts/coverage-gate.sh >=80% total AND no package below 80% (cmd/sovereign 62.5% and internal/authstore 75.7% must rise)",
+    "Concurrency tests: invite redemption (exactly one success), first-admin (exactly one admin), SQLite writes",
+    "Config strictness test rejects unknown/removed keys",
+    "Negative tests per rejected JWT claim",
+    "Cross-tenant IDOR tests for keys/proofs"
+  ],
+  "learnings": [
+    {
+      "text": "README capability table now has a Status column: Shipped (wired+tested) vs Partial (wired, named gap) vs Not wired (package-complete, unmounted).",
+      "confidence": "1.0"
+    },
+    {
+      "text": "Not wired (dead/nil-wired): internal/setup, internal/licenses, internal/keys, internal/protocols/chatfederation, activitypub HTTP-sig verification, solid.WACChecker, backup.Scheduler+destinations, ipfspin.NewPSAClient, moderation.ToSGate.",
+      "confidence": "1.0"
+    },
+    {
+      "text": "atproto PDS mounted at /xrpc/ but with nil Backend/RepoFactory/SigningKey (non-functional as wired). Admin backup form /admin/backup mounted but Apply is a no-op.",
+      "confidence": "1.0"
+    },
+    {
+      "text": "docs-claims.sh gate: every README Shipped row needs a matching claim (route literal in server.go mux.Handle OR pkg dir with *_test.go). Added 8 claims; gate passes (17 verified).",
+      "confidence": "1.0"
+    }
+  ],
+  "meta": {
+    "version": 1,
+    "last_updated": "2026-08-28",
+    "previous_version_fields_changed": ["learnings", "meta"]
+  }
+}

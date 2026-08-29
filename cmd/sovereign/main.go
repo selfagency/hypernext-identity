@@ -11,16 +11,21 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/selfagency/sovereign/internal/server"
+	"github.com/selfagency/sovereign/internal/store"
 )
 
 // version is the build version, overridable at link time.
@@ -74,6 +79,46 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+// clientsCmd groups client administration subcommands.
+var clientsCmd = &cobra.Command{
+	Use:   "clients",
+	Short: "Manage OIDC clients",
+}
+
+// setSecretCmd re-registers a client secret after migration v5 invalidates
+// plaintext secrets. It generates a fresh secret, hashes it with argon2id, and
+// updates the row in place (sidestepping CreateClient's unique constraint).
+// The new secret is printed once to stdout.
+var setSecretCmd = &cobra.Command{
+	Use:   "set-secret <id>",
+	Short: "Re-register a client secret (prints the new secret once)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadServerConfig(v)
+		if err != nil {
+			return err
+		}
+		st, err := store.Open(filepath.Join(cfg.DataDir, "identity.db"))
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer func() { _ = st.Close() }()
+
+		// Generate a 32-byte base64url secret.
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return fmt.Errorf("generate secret: %w", err)
+		}
+		secret := base64.RawURLEncoding.EncodeToString(raw)
+		if err := st.SetClientSecret(cmd.Context(), args[0], secret); err != nil {
+			return err
+		}
+		// Print the new secret once so the operator can store it.
+		fmt.Println(secret)
+		return nil
+	},
+}
+
 func main() {
 	v = viper.New()
 	os.Exit(runMain(os.Args[1:]))
@@ -106,6 +151,8 @@ func init() {
 
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(versionCmd)
+	clientsCmd.AddCommand(setSecretCmd)
+	rootCmd.AddCommand(clientsCmd)
 }
 
 // initConfig loads configuration into Viper. It is the PersistentPreRunE hook,
@@ -160,8 +207,22 @@ func initConfig(cmd *cobra.Command, v *viper.Viper) error {
 
 // loadServerConfig unmarshals Viper into a server.Config and validates it.
 func loadServerConfig(v *viper.Viper) (*server.Config, error) {
+	// CLI-only flags (config, addr, help) are operational, not config-schema
+	// keys. Decode a copy without them so ErrorUnused rejects genuinely
+	// unknown config keys (e.g. typos, removed keys) without tripping on the
+	// bound flags that initConfig merges into viper.
+	strict := viper.New()
+	for k, val := range v.AllSettings() {
+		switch k {
+		case "config", "addr", "help":
+			continue
+		}
+		strict.Set(k, val)
+	}
 	var cfg server.Config
-	if err := v.Unmarshal(&cfg); err != nil {
+	if err := strict.Unmarshal(&cfg, viper.DecoderConfigOption(func(dc *mapstructure.DecoderConfig) {
+		dc.ErrorUnused = true
+	})); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
@@ -172,7 +233,7 @@ func loadServerConfig(v *viper.Viper) (*server.Config, error) {
 
 // runServer starts the HTTP server with graceful shutdown.
 func runServer(ctx context.Context, cfg *server.Config, addr string) error {
-	srv, err := server.New(cfg)
+	srv, err := server.New(cfg, version)
 	if err != nil {
 		return err
 	}

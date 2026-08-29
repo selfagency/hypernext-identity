@@ -23,6 +23,9 @@ type XRPCServer struct {
 	RepoFactory func(ctx context.Context, did string) (*Repo, error)
 	// SigningKey signs atproto session JWTs.
 	SigningKey *rsa.PrivateKey
+	// Issuer and Audience are the expected iss/aud for validated access tokens.
+	Issuer   string
+	Audience string
 }
 
 // ServeHTTP routes XRPC method calls.

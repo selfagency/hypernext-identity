@@ -15,8 +15,10 @@ import (
 // token does not implicitly grant self-service resource access, and a
 // self-service token does not grant admin access (AGENTS.md boundary rule).
 type AdminGuard struct {
-	Key   *rsa.PrivateKey
-	Store *store.Store
+	Key      *rsa.PrivateKey
+	Store    *store.Store
+	Issuer   string
+	Audience string
 }
 
 // Authorize reports whether the request carries a valid admin bearer token.
@@ -25,7 +27,7 @@ func (g *AdminGuard) Authorize(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
-	claims, err := auth.ValidateAccessToken(g.Key, token)
+	claims, err := auth.ValidateAccessToken(g.Key, token, g.Issuer, g.Audience)
 	if err != nil {
 		return false
 	}

@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -164,6 +167,280 @@ func TestSetUserAdmin(t *testing.T) {
 	}
 }
 
+// TestCreateUserConcurrentFirstAdmin verifies that concurrent creation of
+// the first users yields exactly one admin (atomic first-admin decision).
+func TestCreateUserConcurrentFirstAdmin(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	const n = 16
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_ = s.CreateUser(ctx, &User{ID: fmt.Sprintf("u%d", i), TenantID: "t1", Handle: fmt.Sprintf("user%d", i)})
+		}(i)
+	}
+	wg.Wait()
+
+	users, err := s.ListUsers(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != n {
+		t.Fatalf("users = %d, want %d", len(users), n)
+	}
+	admins := 0
+	for _, u := range users {
+		if u.IsAdmin {
+			admins++
+		}
+	}
+	if admins != 1 {
+		t.Fatalf("admins = %d, want exactly 1", admins)
+	}
+}
+
+// TestCreateUserTenantScoped verifies the first-admin decision is instance-
+// scoped, not per-tenant: a first user in tenant B does not become admin
+// when a user already exists in tenant A.
+func TestCreateUserTenantScoped(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "tA", Handle: "a.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "tA", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	// First user in tenant B.
+	if err := s.CreateTenant(ctx, &Tenant{ID: "tB", Handle: "b.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u2", TenantID: "tB", Handle: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UserByHandle(ctx, "tB", "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IsAdmin {
+		t.Fatal("first user in tenant B should NOT be admin when a user already exists in tenant A")
+	}
+}
+
+// TestCreateUserCallerOverridePreserved verifies a non-first user with an
+// explicit IsAdmin=true stays admin (caller override preserved).
+func TestCreateUserCallerOverridePreserved(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u2", TenantID: "t1", Handle: "bob", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UserByID(ctx, "u2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IsAdmin {
+		t.Fatal("second user with explicit IsAdmin=true should stay admin")
+	}
+}
+
+// TestCreateUserReturnedAdminStatus verifies the returned struct reflects the
+// actual DB admin outcome: the first user is admin even when the caller did
+// not request it, and a non-first user honors the caller's override.
+func TestCreateUserReturnedAdminStatus(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First user: caller passes IsAdmin=false, but the DB promotes them to
+	// admin. The returned struct must reflect the DB outcome (admin).
+	first := &User{ID: "u1", TenantID: "t1", Handle: "alice"}
+	if err := s.CreateUser(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if !first.IsAdmin {
+		t.Fatal("returned first user should report IsAdmin=true (DB promoted to admin)")
+	}
+
+	// Non-first user with explicit override: stays admin.
+	override := &User{ID: "u2", TenantID: "t1", Handle: "bob", IsAdmin: true}
+	if err := s.CreateUser(ctx, override); err != nil {
+		t.Fatal(err)
+	}
+	if !override.IsAdmin {
+		t.Fatal("returned non-first user with IsAdmin=true should report admin")
+	}
+
+	// Non-first user without override: stays non-admin.
+	plain := &User{ID: "u3", TenantID: "t1", Handle: "carol"}
+	if err := s.CreateUser(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	if plain.IsAdmin {
+		t.Fatal("returned non-first user without override should report non-admin")
+	}
+}
+
+// TestRotateAuthRefreshToken verifies rotation succeeds, and fails when the
+// old token is missing or already rotated.
+func TestRotateAuthRefreshToken(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	now := time.Now()
+	_ = s.SaveAuthRefreshToken(ctx, &AuthRefreshToken{Token: "old1", Subject: "alice", ClientID: "c1", Scopes: "openid", AuthTime: now, CreatedAt: now})
+
+	// Success: old token rotated, successor persisted.
+	succ := &AuthRefreshToken{Token: "new1", Subject: "alice", ClientID: "c1", Scopes: "openid", AuthTime: now, FamilyID: "fam1", CreatedAt: now}
+	if err := s.RotateAuthRefreshToken(ctx, "old1", succ); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	old, err := s.GetAuthRefreshToken(ctx, "old1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.RotatedAt.IsZero() {
+		t.Fatal("old token not marked rotated")
+	}
+	if _, err := s.GetAuthRefreshToken(ctx, "new1"); err != nil {
+		t.Fatalf("successor not persisted: %v", err)
+	}
+
+	// Already rotated: replaying the old token must fail.
+	if err := s.RotateAuthRefreshToken(ctx, "old1", succ); err == nil {
+		t.Fatal("rotating an already-rotated token should fail")
+	}
+
+	// Missing token.
+	if err := s.RotateAuthRefreshToken(ctx, "nope", succ); err == nil {
+		t.Fatal("rotating a missing token should fail")
+	}
+}
+
+// TestRevokeAuthRefreshTokenFamily verifies family revocation and the empty-
+// family no-op.
+func TestRevokeAuthRefreshTokenFamily(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	now := time.Now()
+	_ = s.SaveAuthRefreshToken(ctx, &AuthRefreshToken{Token: "t1", Subject: "alice", ClientID: "c1", Scopes: "openid", AuthTime: now, FamilyID: "fam1", CreatedAt: now})
+	_ = s.SaveAuthRefreshToken(ctx, &AuthRefreshToken{Token: "t2", Subject: "alice", ClientID: "c1", Scopes: "openid", AuthTime: now, FamilyID: "fam1", CreatedAt: now})
+	_ = s.SaveAuthRefreshToken(ctx, &AuthRefreshToken{Token: "t3", Subject: "bob", ClientID: "c1", Scopes: "openid", AuthTime: now, FamilyID: "fam2", CreatedAt: now})
+
+	if err := s.RevokeAuthRefreshTokenFamily(ctx, "fam1"); err != nil {
+		t.Fatalf("revoke family: %v", err)
+	}
+	for _, tok := range []string{"t1", "t2"} {
+		got, err := s.GetAuthRefreshToken(ctx, tok)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.RevokedAt.IsZero() {
+			t.Fatalf("token %s not revoked", tok)
+		}
+	}
+	// Unrelated family untouched.
+	got, _ := s.GetAuthRefreshToken(ctx, "t3")
+	if !got.RevokedAt.IsZero() {
+		t.Fatal("token in other family should not be revoked")
+	}
+
+	// Empty family is a no-op.
+	if err := s.RevokeAuthRefreshTokenFamily(ctx, ""); err != nil {
+		t.Fatalf("empty family should be a no-op, got %v", err)
+	}
+}
+
+// TestSetClientSecret verifies re-registering a client secret hashes it and
+// updates the row, and rejects over-length secrets and unknown clients.
+func TestSetClientSecret(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateClient(ctx, &Client{ID: "web", Secret: "old-secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetClientSecret(ctx, "web", "new-secret"); err != nil {
+		t.Fatalf("set secret: %v", err)
+	}
+	c, err := s.ClientByID(ctx, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Secret == "new-secret" {
+		t.Fatal("secret stored in plaintext")
+	}
+	if !VerifyClientSecret("new-secret", c.Secret) {
+		t.Fatal("new secret does not verify")
+	}
+	if VerifyClientSecret("old-secret", c.Secret) {
+		t.Fatal("old secret still verifies after rotation")
+	}
+
+	// Over-length secret rejected.
+	if err := s.SetClientSecret(ctx, "web", strings.Repeat("x", 129)); err == nil {
+		t.Fatal("over-length secret accepted")
+	}
+
+	// Unknown client.
+	if err := s.SetClientSecret(ctx, "nope", "secret"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown client = %v, want ErrNotFound", err)
+	}
+}
+
+// TestVerifyClientSecretEdgeCases verifies the sentinel and malformed stored
+// values are rejected outright (fail closed).
+func TestVerifyClientSecretEdgeCases(t *testing.T) {
+	// Sentinel written by migration v5.
+	if VerifyClientSecret("anything", invalidatedSecret) {
+		t.Fatal("sentinel secret should never verify")
+	}
+	// Non-argon2id prefix.
+	if VerifyClientSecret("x", "$bcrypt$v=2a$salt$hash") {
+		t.Fatal("non-argon2id stored value should not verify")
+	}
+	// Wrong number of parts.
+	if VerifyClientSecret("x", "$argon2id$v=19$m=1,t=1,p=1") {
+		t.Fatal("malformed stored value should not verify")
+	}
+	// Unparseable params.
+	if VerifyClientSecret("x", "$argon2id$v=19$bogus$c2FsdA==$aGFzaA==") {
+		t.Fatal("unparseable params should not verify")
+	}
+	// Invalid base64 salt.
+	if VerifyClientSecret("x", "$argon2id$v=19$m=1,t=1,p=1$!!!$aGFzaA==") {
+		t.Fatal("invalid base64 salt should not verify")
+	}
+	// Invalid base64 hash.
+	if VerifyClientSecret("x", "$argon2id$v=19$m=1,t=1,p=1$c2FsdA==$!!!") {
+		t.Fatal("invalid base64 hash should not verify")
+	}
+}
+
+// TestCreateClientDuplicate verifies a duplicate client ID is rejected.
+func TestCreateClientDuplicate(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateClient(ctx, &Client{ID: "web", Secret: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateClient(ctx, &Client{ID: "web", Secret: "s2"}); !errors.Is(err, ErrDuplicateClient) {
+		t.Fatalf("duplicate client = %v, want ErrDuplicateClient", err)
+	}
+}
+
 // TestCreateUserDuplicate verifies a duplicate tenant+handle is rejected.
 func TestCreateUserDuplicate(t *testing.T) {
 	ctx := context.Background()
@@ -192,7 +469,9 @@ func TestListUsers(t *testing.T) {
 	}
 }
 
-// TestClientCRUD verifies client create + lookup + list.
+// TestClientCRUD verifies client create + lookup + list. The stored secret is
+// an argon2id hash, so lookup returns the hash and verification goes through
+// VerifyClientSecret.
 func TestClientCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := newAuthTestStore(t)
@@ -205,7 +484,13 @@ func TestClientCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Secret != "s3cret" || len(c.RedirectURIs) != 1 || c.RedirectURIs[0] != "https://app.example.com/cb" {
+	if c.Secret == "s3cret" {
+		t.Fatal("client secret stored in plaintext")
+	}
+	if !VerifyClientSecret("s3cret", c.Secret) {
+		t.Fatal("valid secret does not verify against stored hash")
+	}
+	if len(c.RedirectURIs) != 1 || c.RedirectURIs[0] != "https://app.example.com/cb" {
 		t.Fatalf("client = %+v", c)
 	}
 	if len(c.Scopes) != 2 {
@@ -217,6 +502,44 @@ func TestClientCRUD(t *testing.T) {
 	}
 	if _, err := s.ClientByID(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown client = %v, want ErrNotFound", err)
+	}
+}
+
+// TestClientSecretStoredHashed verifies CreateClient stores an argon2id hash,
+// never the plaintext secret, and that the plaintext verifies against it.
+func TestClientSecretStoredHashed(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	const secret = "s3cret-value"
+	if err := s.CreateClient(ctx, &Client{ID: "web", Secret: secret}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.ClientByID(ctx, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Secret == secret {
+		t.Fatal("client secret stored in plaintext")
+	}
+	if !VerifyClientSecret(secret, c.Secret) {
+		t.Fatal("stored hash does not verify the original secret")
+	}
+	if VerifyClientSecret("wrong", c.Secret) {
+		t.Fatal("wrong secret verifies against stored hash")
+	}
+}
+
+// TestClientSecretMaxLength verifies CreateClient rejects secrets longer than
+// 128 bytes.
+func TestClientSecretMaxLength(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateClient(ctx, &Client{ID: "c1", Secret: strings.Repeat("x", 129)}); err == nil {
+		t.Fatal("over-length secret accepted")
+	}
+	// A 128-byte secret is allowed.
+	if err := s.CreateClient(ctx, &Client{ID: "c2", Secret: strings.Repeat("x", 128)}); err != nil {
+		t.Fatalf("128-byte secret rejected: %v", err)
 	}
 }
 
@@ -356,5 +679,81 @@ func TestInviteTokenCRUD(t *testing.T) {
 
 	if _, err := s.InviteTokenByHash(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown invite = %v, want ErrNotFound", err)
+	}
+}
+
+// TestInviteTokenConcurrentRedemption verifies that concurrent redemption of
+// the same token yields exactly one success (atomic single-use gate).
+func TestInviteTokenConcurrentRedemption(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	hash := "concurrenthash"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv1", TokenHash: hash, UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 16
+	var wg sync.WaitGroup
+	results := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = s.RedeemInviteToken(ctx, hash, time.Now())
+		}(i)
+	}
+	wg.Wait()
+
+	var successes int
+	for _, err := range results {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successes = %d, want exactly 1", successes)
+	}
+}
+
+// TestInviteTokenErrorClassification verifies used/expired/not-found map to
+// distinct classified errors.
+func TestInviteTokenErrorClassification(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Used.
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "used", TokenHash: "usedhash", UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkInviteTokenUsed(ctx, "used"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RedeemInviteToken(ctx, "usedhash", time.Now()); !errors.Is(err, ErrInviteUsed) {
+		t.Fatalf("used = %v, want ErrInviteUsed", err)
+	}
+
+	// Expired.
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "exp", TokenHash: "exphash", UserID: "u1", ExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RedeemInviteToken(ctx, "exphash", time.Now()); !errors.Is(err, ErrInviteExpired) {
+		t.Fatalf("expired = %v, want ErrInviteExpired", err)
+	}
+
+	// Not found.
+	if err := s.RedeemInviteToken(ctx, "nohash", time.Now()); !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("not found = %v, want ErrInviteInvalid", err)
 	}
 }

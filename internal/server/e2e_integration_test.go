@@ -14,7 +14,7 @@ import (
 // scopes using the server's auth signing key.
 func mintAccessToken(t *testing.T, ts *testServer, subject string, scopes []string) string {
 	t.Helper()
-	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), subject, scopes, auth.AccessTokenTTL)
+	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), subject, scopes, auth.AccessTokenTTL, "https://id."+ts.srv.cfg.Domain, ts.srv.cfg.Audience)
 	if err != nil {
 		t.Fatalf("MintAccessToken: %v", err)
 	}

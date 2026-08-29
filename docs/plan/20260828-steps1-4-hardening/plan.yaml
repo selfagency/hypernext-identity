@@ -1,0 +1,740 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# PLAN METADATA
+# ═══════════════════════════════════════════════════════════════════════════
+plan_id: 20260828-steps1-4-hardening
+objective: "Implement remediation Steps 1-4 from the exhaustive code review of sovereign@edc4ed1: (1) fail-closed startup + truthful docs, (2) tenant identity resolution, (3) atomicity races, (4) auth primitive hardening. Steps 5-8 are OUT OF SCOPE."
+created_at: 2026-08-28T00:00:00Z
+created_by: gem-planner
+status: completed
+tldr: |
+  HIGH-complexity, security-sensitive, cross-domain hardening of the sovereign Go server.
+  19 tasks across 5 waves. Wave 1 lays foundations (host normalization, strict config,
+  atomic invite, conn pool, access-token claims, key parsing, two design decisions).
+  Wave 2 fixes tenant identity resolution (A2) + first-admin atomicity. Wave 3 makes
+  startup fail-closed (A1) and hashes client secrets (B4, breaking migration). Wave 4
+  makes NodeInfo truthful (F3) and hardens refresh-token lifecycle (E2). Wave 5 is docs
+  (F1-docs, F4) + coverage budget + full security review. Two breaking changes: strict
+  config parsing and client-secret/refresh-token invalidation, both documented as
+  operator migration steps. Revised per reviewer+critic amendments: atomic invite keeps
+  InviteTokenByHash for UserID + error classification; MemoryStore hashes secrets;
+  version passed to New(cfg, version) not via Config; migration v5 adds re-registration
+  CLI; coverage budget task added for cmd/sovereign + authstore.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLAN-LEVEL METRICS
+# ═══════════════════════════════════════════════════════════════════════════
+plan_metrics:
+  wave_1_task_count: 8
+  total_dependencies: 32
+  risk_score: high
+quality_warnings:
+  - "server.go is touched by 4 findings (A1, B16, B15, F3) — sequenced across waves 1-4 to avoid parallel-edit conflicts; do not parallelize."
+  - "store/auth.go is touched by 4 findings (B7, B8, B4, E2) — sequenced; B4 migration v5 must land before E2 migration v6."
+  - "auth/sqlstore.go touched by 3 findings (B4, E2, E3) — E3 (wave 1) precedes B4/E2 (waves 3-4)."
+  - "cmd/sovereign/main.go touched by A1, F1, F3 — F1 (wave 1) precedes A1 (wave 3) and F3 (wave 4)."
+  - "A5 (atproto blob empty tenant prefix) is DEFERRED — depends on A4 wiring which is out of scope. Do NOT attempt."
+  - "T7 touches internal/protocols/atproto/session.go (newID) — first touch of a Step-7 package. Flag it; do NOT let it become a precedent for atproto work."
+  - "T2 rejected-key list and T14 removed-key list MUST match exactly (canonical list defined in both)."
+  - "CHANGELOG.md is owned entirely by T14 (F1 breaking-change + F4 capability status); T15 is README-only to avoid parallel-edit conflict."
+  - "Coverage budget: cmd/sovereign (62.5%) and internal/authstore (75.7%) must reach >=80% via T17 before T16 review."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLANNING ANALYSIS (HIGH complexity)
+# ═══════════════════════════════════════════════════════════════════════════
+open_questions:
+  - question: "Is the first-user admin instance-scoped or tenant-scoped?"
+    context: "CreateUser (store/auth.go:151) makes the first user in the whole store the instance admin, unscoped by tenant. Admin routes live on the identity host (instance-level). Decision feeds T4 (B8)."
+    type: decision_blocker
+    affects: [T4]
+assumptions:
+  - "golang.org/x/crypto is already a dependency (ssh uses it); argon2id is a subpackage — no new dependency for B4."
+  - "B4 uses argon2id (avoids bcrypt 72-byte truncation) and enforces a max client-secret length in CreateClient as defense-in-depth."
+  - "The version build variable `var version = \"dev\"` in cmd/sovereign/main.go is the single source of truth for F3; pass it as a separate parameter to New(cfg, version), NOT via server.Config (version is a build-time constant, not an operator-configurable YAML key)."
+  - "Migration v5 (B4) re-registration path is an admin CLI command `sovereign clients set-secret <id>` (CreateClient's INSERT unique on client_id blocks plain re-registration)."
+  - "Migration v6 (E2) grace policy: existing valid refresh tokens survive the migration; rotation/reuse-detection applies to tokens issued after migration (avoids mass logout)."
+  - "E2 reuse-detection retry false-positive (client retries after lost response / parallel refresh redeems already-rotated token) is acceptable per OAuth2 BCP; documented in the migration spec."
+  - "Refresh-token rotation/reuse detection can reuse the existing auth_refresh_tokens schema (expires_at exists); a small migration v6 is acceptable if a family/rotation marker is required."
+  - "No gem-debugger tasks: the review already diagnosed every root cause; implementers fix directly."
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: "Strict config (F1) rejects a production config that still carries unimplemented keys, so the server refuses to boot."
+      likelihood: high
+      impact: high
+      mitigation: "F1-docs (T14) ships the exact key-removal list in CHANGELOG as a breaking change; Validate() error message names the offending key; T2 rejected-key list and T14 removed-key list are kept in lockstep."
+    - scenario: "B4 migration v5 invalidates plaintext client secrets, breaking existing OIDC clients until operators re-register them."
+      likelihood: high
+      impact: high
+      mitigation: "Migration sets a sentinel hash and logs affected client IDs; re-registration path is the admin CLI `sovereign clients set-secret <id>`; CHANGELOG documents the step; T-critic2 reviews the strategy."
+    - scenario: "E2 refresh-token rotation introduces a reuse-detection false positive that revokes a legitimate session."
+      likelihood: medium
+      impact: high
+      mitigation: "Rotation deletes old token + inserts new in one transaction; reuse detection keys on the old token hash; in-memory map entry deleted on rotation and revocation; retry false-positive documented as acceptable per OAuth2 BCP; concurrency test covers single-use."
+    - scenario: "A1 fail-closed startup makes the server refuse to boot when OIDC/WebAuthn init fails, taking down a previously 'working' (but auth-less) deployment."
+      likelihood: medium
+      impact: high
+      mitigation: "This is the intended behavior (fail closed). CHANGELOG documents that a boot failure now means auth is misconfigured, not ignorable."
+    - scenario: "A2 tenant-resolution rewrite regresses the keys/proofs endpoints, serving empty or cross-tenant data."
+      likelihood: medium
+      impact: critical
+      mitigation: "Tests rewritten to seed real tenants (ID != handle); cross-tenant IDOR test added; T16 review verifies tenant.FromContext usage."
+    - scenario: "Coverage budget not met for cmd/sovereign (62.5%) or internal/authstore (75.7%), failing the 80% gate."
+      likelihood: medium
+      impact: medium
+      mitigation: "T17 (coverage budget) explicitly targets both packages to >=80% before T16 review; T2/T7 add coverage where feasible."
+coordination_notes:
+  - "T1 (B16) must land before T8 (A2) and T9 (B15): all three consume NormalizeHost."
+  - "T3 (B7) and T4 (B8) both edit store/auth.go — T4 depends on T3; do not run in parallel."
+  - "T7 (E3) edits auth/sqlstore.go before T12 (B4) and T13 (E2) — sequence enforced."
+  - "T12 (B4) migration v5 must land before T13 (E2) migration v6 to avoid migration-version collision in the shared migrations slice."
+  - "T-critic1 resolves the B8 admin-scope decision before T4 implements it."
+  - "T-critic2 reviews the breaking-change migration strategy before T12/T13 write migrations and T14 documents them."
+  - "T11 passes version via New(cfg, version) parameter, NOT via server.Config; OpenRegistrations stays in Config (legitimate operator decision)."
+  - "T2 rejected-key list and T14 removed-key list MUST match exactly; both reference the same canonical list."
+  - "CHANGELOG.md is owned entirely by T14; T15 is README-only (no parallel-edit conflict)."
+  - "T17 (coverage budget) must land before T16 (review) so the review can verify coverage >=80%."
+  - "T7's atproto/session.go newID touch is the first touch of a Step-7 package — flag it, do not extend into atproto work."
+contracts:
+  - from_task: T1
+    to_task: T8
+    interface: "internal/tenant.NormalizeHost(host string) string — net.SplitHostPort + lowercase + trailing-dot strip; used by endpoints to derive tenant handle."
+    format: "Go func in internal/tenant/normalize.go"
+  - from_task: T1
+    to_task: T9
+    interface: "NormalizeHost used in didDocHandler to derive did:web:<handle> and alsoKnownAs from resolved tenant.Handle, never r.Host."
+    format: "Go func"
+  - from_task: T7
+    to_task: T12
+    interface: "parseRSAPrivateKey hardened (PKCS#8 + >=2048-bit + no trailing data); newID propagates rand.Read error. B4 reuses the hardened key path."
+    format: "Go funcs in internal/auth/sqlstore.go"
+  - from_task: T12
+    to_task: T13
+    interface: "Migration v5 (invalidate plaintext client secrets) lands before migration v6 (refresh-token rotation marker, if needed). Shared migrations slice."
+    format: "store/migrate.go migrations slice"
+  - from_task: T-critic1
+    to_task: T4
+    interface: "Decision: admin is instance-scoped (identity host) vs tenant-scoped. T4 implements CreateUser transaction per the decision."
+    format: "Documented decision in T4 handoff"
+  - from_task: T-critic2
+    to_task: T12
+    interface: "Approved migration v5 spec: sentinel hash + affected-client log + re-registration CLI `sovereign clients set-secret <id>`; argon2id hashing + max secret length."
+    format: "Migration v5 spec"
+  - from_task: T-critic2
+    to_task: T13
+    interface: "Approved migration v6 spec: grace policy (existing valid refresh tokens survive), rotation/reuse-detection for post-migration tokens, retry false-positive documented per OAuth2 BCP."
+    format: "Migration v6 spec"
+  - from_task: T-critic2
+    to_task: T14
+    interface: "Breaking-change migration notes (strict config key-removal list + client-secret/refresh-token invalidation) for CHANGELOG."
+    format: "Markdown section"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TASKS
+# ═══════════════════════════════════════════════════════════════════════════
+tasks:
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 1 — foundations (independent, no shared-file conflicts)
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T1
+    title: "B16: Add tenant.NormalizeHost and use everywhere"
+    status: completed
+    description: "Add internal/tenant.NormalizeHost (net.SplitHostPort + lowercase + trailing-dot strip). Replace strings.Split(r.Host, \":\")[0] in server.go hostRouter.ServeHTTP (line 317), tenant/resolver.go Middleware (line 40), and endpoints.go (line 43). Case-fold and strip trailing dot so [::1]:8080, Alice.Example.COM., and example.com:443 all resolve correctly."
+    wave: 1
+    agent: gem-implementer
+    covers: [B16]
+    dependencies: []
+    conflicts_with: [T9, T10, T11]
+    context_files:
+      - path: internal/tenant/resolver.go
+        description: "Middleware uses strings.Split(r.Host, \":\")[0] at line 40 — replace with NormalizeHost."
+      - path: internal/server/server.go
+        description: "hostRouter.ServeHTTP line 317 uses strings.Split(r.Host, \":\")[0] — replace with NormalizeHost."
+      - path: internal/endpoints/endpoints.go
+        description: "serveKeys line 43 uses strings.Split(r.Host, \":\")[0] — replace with NormalizeHost."
+    acceptance_criteria:
+      - "NormalizeHost handles IPv6 ([::1]:8080 -> ::1), mixed case, and trailing dot."
+      - "All three call sites use NormalizeHost; no remaining strings.Split(r.Host, \":\")[0] in server.go, resolver.go, endpoints.go."
+    success_criteria:
+      - "TestNormalizeHost table-driven: [::1]:8080 -> ::1, Alice.Example.COM. -> alice.example.com, example.com:443 -> example.com, bare host unchanged."
+      - "Resolver middleware test with IPv6 host resolves the tenant."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, net]
+    test_coverage: "internal/tenant/normalize_test.go + resolver_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: strings.Split(r.Host, \":\")[0] truncates IPv6 and does not case-fold."]
+      required_test_first: "TestNormalizeHost (table-driven) before implementing NormalizeHost."
+      target_files: ["internal/tenant/normalize.go", "internal/tenant/resolver.go", "internal/server/server.go", "internal/endpoints/endpoints.go"]
+      minimal_change: "Add NormalizeHost; swap call sites; do not refactor surrounding logic."
+      acceptance_checks: ["go test ./internal/tenant/ ./internal/endpoints/ -race", "grep for strings.Split(r.Host, \":\")[0] returns nothing"]
+
+  - id: T2
+    title: "F1-code: Strict config validation (reject unknown/removed keys)"
+    status: completed
+    deviation: "KEPT ipfs struct field (genuinely wired at server.go:215). Removed identity_host, sqlite, tls, atproto, backup. T6 added new 'audience' config key (legitimate operator decision). T14 must keep ipfs + audience in config.example.yml."
+    description: "Make config parsing reject unknown keys. In internal/server/config.go LoadConfig, use yaml.KnownFields(true) on the decoder. In cmd/sovereign/main.go loadServerConfig, add viper.DecoderConfigOption with ErrorUnused so the Viper path also rejects unknown keys. Validate() must reject the canonical removed-key list with an error naming the offending key. REMOVE the sqlite.mode validation block (config.go:126-130) and the SQLiteConfig.Mode/Single struct fields (single mode is no longer configurable). REMOVE the identity_host struct field (config.go:19, never consumed). Canonical removed-key list (MUST match T14 exactly): identity_host, sqlite.mode, sqlite.single.path, tls.*, ipfs.*, atproto.did_method, atproto.plc_endpoint, backup.cron_expr, backup.destination_type, storage.s3.secure."
+    wave: 1
+    agent: gem-implementer
+    covers: [F1]
+    dependencies: []
+    conflicts_with: [T10, T11]
+    context_files:
+      - path: internal/server/config.go
+        description: "LoadConfig uses yaml.Unmarshal (line 103) — add KnownFields(true). Validate() (line 113) — reject removed keys. sqlite.mode validation block (lines 126-130) and SQLiteConfig.Mode/Single fields — REMOVE. identity_host struct field (line 19) — REMOVE."
+      - path: cmd/sovereign/main.go
+        description: "loadServerConfig uses v.Unmarshal (line 164) — add ErrorUnused decoder option."
+    acceptance_criteria:
+      - "Config with an unknown key fails LoadConfig and loadServerConfig."
+      - "Config with a removed key (e.g. tls.enabled) fails Validate with a message naming the key."
+      - "sqlite.mode validation block (config.go:126-130) and SQLiteConfig.Mode/Single struct fields removed."
+      - "identity_host struct field (config.go:19) removed."
+      - "Rejected-key list matches T14's removed-key list exactly (canonical list)."
+      - "Valid minimal config still loads."
+    success_criteria:
+      - "TestConfigRejectsUnknownKeys (yaml path) and TestConfigRejectsUnknownKeysViper (viper path)."
+      - "TestConfigRejectsRemovedKeys for each key in the canonical removed-key list."
+      - "TestConfigNoSQLiteMode: sqlite.mode no longer accepted or validated."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, viper, yaml.v3]
+    test_coverage: "internal/server/config_test.go + cmd/sovereign/main_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["No strictness currently: grep for ErrorUnused/KnownFields returns nothing. sqlite.mode validation at config.go:126-130 and identity_host field at config.go:19 are dead/unimplemented — remove, do not keep."]
+      required_test_first: "TestConfigRejectsUnknownKeys before adding KnownFields(true)."
+      target_files: ["internal/server/config.go", "cmd/sovereign/main.go"]
+      minimal_change: "Add strictness flags; remove sqlite.mode validation + Mode/Single fields + identity_host field; reject canonical removed-key list."
+      acceptance_checks: ["go test ./internal/server/ ./cmd/sovereign/ -race", "config.example.yml keys all parse", "grep for 'sqlite.mode' and 'identity_host' in config.go returns nothing"]
+
+  - id: T3
+    title: "B7: Atomic invite-token redemption"
+    status: completed
+    description: "Replace the read-check-update invite flow (InviteTokenByHash + MarkInviteTokenUsed across 3 statements) with a single atomic UPDATE as the single-use gate: UPDATE invite_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at > ?. Require RowsAffected()==1 to redeem. On 0 rows, a follow-up SELECT (InviteTokenByHash) classifies the error for the response: used_at set -> ErrInviteUsed; expired -> ErrInviteExpired; not found -> ErrInviteInvalid (benign read race; the UPDATE is authoritative for single-use). InviteTokenByHash is RETAINED for UserID lookup after successful redemption (inviteHandler uses it.UserID to mint the session). Edge case: if the token's user_id references a deleted user, reject (do not mint a session for a non-existent subject)."
+    wave: 1
+    agent: gem-implementer
+    covers: [B7]
+    dependencies: []
+    conflicts_with: [T4]
+    context_files:
+      - path: internal/store/auth.go
+        description: "InviteTokenByHash (line 289) + MarkInviteTokenUsed (line 306) — replace with atomic single-statement redeem; retain InviteTokenByHash for UserID lookup + error classification."
+      - path: internal/server/invite.go
+        description: "inviteHandler (line 25) does read-check-update — rely on atomic redeem result; fetch UserID via InviteTokenByHash; reject deleted-user tokens."
+    acceptance_criteria:
+      - "Single atomic UPDATE is the single-use gate: RowsAffected()==1 required to redeem."
+      - "On 0 rows, follow-up SELECT classifies the error: used_at set -> ErrInviteUsed; expired -> ErrInviteExpired; not found -> ErrInviteInvalid."
+      - "InviteTokenByHash RETAINED for UserID lookup after successful redemption (session minting needs it)."
+      - "Token whose user_id references a deleted user is rejected (no session minted for non-existent subject)."
+      - "Concurrent redemption of the same token yields exactly one success."
+    success_criteria:
+      - "TestInviteTokenConcurrentRedemption: N goroutines redeem same token, exactly 1 succeeds, rest get classified errors."
+      - "TestInviteTokenErrorClassification: used vs expired vs not-found map to distinct errors."
+      - "TestInviteTokenDeletedUserRejected: token referencing deleted user -> no session minted."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, SQLite]
+    test_coverage: "internal/store/auth_test.go + internal/server/invite_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: 3-statement read-check-update, no transaction, no WHERE used_at IS NULL, RowsAffected not inspected. Atomic UPDATE returns only RowsAffected (collapses used-vs-expired) and discards user_id — hence follow-up SELECT for classification + UserID."]
+      required_test_first: "TestInviteTokenConcurrentRedemption before changing MarkInviteTokenUsed."
+      target_files: ["internal/store/auth.go", "internal/server/invite.go"]
+      minimal_change: "Single atomic UPDATE as gate; follow-up SELECT to classify error + fetch UserID; reject deleted-user tokens."
+      acceptance_checks: ["go test ./internal/store/ ./internal/server/ -race -run Invite"]
+
+  - id: T5
+    title: "D5: SQLite connection pool limits + concurrency test"
+    status: completed
+    description: "In internal/store/store.go Open, set SetMaxOpenConns(1) for the write path (or split read/write handles) and SetMaxIdleConns/SetConnMaxLifetime. Add a concurrency test proving concurrent writes do not hit 'database is locked'. The test MUST ALSO assert the pool limit is set (db.Stats().MaxOpenConnections == 1) so it fails if the limit is removed — busy_timeout(5000) already in the DSN (store.go:32) may let concurrent writes succeed without the limit."
+    wave: 1
+    agent: gem-implementer
+    covers: [D5]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/store/store.go
+        description: "Open (line 22) sets no pool limits — add SetMaxOpenConns/SetMaxIdleConns/SetConnMaxLifetime. DSN already has busy_timeout(5000) at line 32."
+    acceptance_criteria:
+      - "Store sets explicit connection pool limits."
+      - "Concurrent writes succeed without 'database is locked'."
+      - "Test asserts db.Stats().MaxOpenConnections == 1 (fails if the limit is removed)."
+    success_criteria:
+      - "TestSQLiteConcurrentWrites: N goroutines write distinct rows concurrently, all succeed."
+      - "TestSQLitePoolLimitSet: db.Stats().MaxOpenConnections == 1."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, SQLite]
+    test_coverage: "internal/store/store_test.go addition"
+    handoff:
+      do_not_reinvestigate: ["No pool limits currently (grep SetMaxOpenConns returns nothing). busy_timeout(5000) in DSN may mask the missing limit — the pool-limit assertion is required, not optional."]
+      required_test_first: "TestSQLiteConcurrentWrites before setting pool limits."
+      target_files: ["internal/store/store.go"]
+      minimal_change: "Set pool limits in Open; add concurrency test + pool-limit assertion."
+      acceptance_checks: ["go test ./internal/store/ -race -run Concurrent"]
+
+  - id: T6
+    title: "B3: Harden access-token validation and minting"
+    status: completed
+    note: "Added 'audience' config key (defaults to domain). issuer = https://id.<domain>. T14 must document audience in config.example.yml."
+    description: "In internal/auth/access_token.go ValidateAccessToken: require non-zero future exp, non-empty sub, matching iss, expected aud, and expected token-type; reject otherwise. Expected issuer = https://id.<domain> (the identity host) and expected aud = the configured audience; pass both into ValidateAccessToken as explicit inputs (do not hard-code). MintAccessTokenWebID: reject ttl<=0 at mint; add jti (already present) for revocation. Add negative tests per rejected claim."
+    wave: 1
+    agent: gem-implementer
+    covers: [B3]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/auth/access_token.go
+        description: "ValidateAccessToken (line 71) only enforces expiry when Expiry != 0; no iss/aud/iat/jti/token-type checks. MintAccessTokenWebID (line 39) accepts arbitrary TTLs."
+    acceptance_criteria:
+      - "ValidateAccessToken rejects: exp=0, expired, empty sub, wrong iss, wrong aud, wrong token-type."
+      - "Expected iss/aud are explicit validator inputs (issuer = https://id.<domain>, aud = configured audience), not hard-coded."
+      - "MintAccessTokenWebID rejects ttl<=0."
+      - "jti present on every minted token."
+    success_criteria:
+      - "TestValidateAccessTokenRejectsClaims: table-driven negative tests per rejected claim."
+      - "TestMintAccessTokenRejectsTTL: ttl<=0 returns error."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, go-jose]
+    test_coverage: "internal/auth/access_token_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: expiry only enforced when Expiry != 0; no iss/aud/iat/jti/token-type checks. Expected iss/aud come from the identity host + configured audience — pass as validator inputs."]
+      required_test_first: "TestValidateAccessTokenRejectsClaims before hardening ValidateAccessToken."
+      target_files: ["internal/auth/access_token.go"]
+      minimal_change: "Add claim checks with iss/aud as explicit inputs; do not change token format beyond required claims."
+      acceptance_checks: ["go test ./internal/auth/ -race -run AccessToken"]
+
+  - id: T7
+    title: "E3: Harden RSA key parsing + propagate rand.Read errors"
+    status: completed
+    note: "authstore coverage 78.7% (up from 75.7%) still below 80% — T17 must close."
+    description: "In internal/auth/sqlstore.go parseRSAPrivateKey: support PKCS#8 (x509.ParsePKCS8PrivateKey) in addition to PKCS#1, require >=2048-bit modulus, reject trailing data after the PEM block. In internal/auth/storage.go newID, internal/admin/users.go newID, internal/protocols/atproto/session.go newID: propagate every rand.Read error (return error instead of discarding). Also harden internal/authstore/authstore.go parseRSAPrivate the same way. NOTE: the atproto/session.go newID touch is the first touch of a Step-7 package — a small in-scope auth-primitive fix; flag it and do NOT let it become a precedent for atproto work."
+    wave: 1
+    agent: gem-implementer
+    covers: [E3]
+    dependencies: []
+    conflicts_with: [T12, T13]
+    context_files:
+      - path: internal/auth/sqlstore.go
+        description: "parseRSAPrivateKey (line 295) only PKCS#1, no min modulus, ignores trailing data. newID (line 392) discards rand.Read error."
+      - path: internal/auth/storage.go
+        description: "newID (line 392) discards rand.Read error."
+      - path: internal/admin/users.go
+        description: "newID (line 93) discards rand.Read error; return value is an invite token."
+      - path: internal/protocols/atproto/session.go
+        description: "newID (line 90) discards rand.Read error. FIRST TOUCH of a Step-7 package — flag, do not extend."
+      - path: internal/authstore/authstore.go
+        description: "parseRSAPrivate (line 69) only PKCS#1 — harden same as sqlstore."
+    acceptance_criteria:
+      - "parseRSAPrivateKey accepts PKCS#8 and PKCS#1, rejects <2048-bit keys, rejects trailing data."
+      - "Every newID propagates rand.Read error (callers handle it)."
+      - "atproto/session.go change is limited to newID error propagation; no other atproto changes."
+    success_criteria:
+      - "TestParseRSAPrivateKeyPKCS8, TestParseRSAPrivateKeyRejectsWeak (<2048), TestParseRSAPrivateKeyRejectsTrailing."
+      - "TestNewIDPropagatesError (inject failing rand.Reader)."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, crypto/x509, crypto/rand]
+    test_coverage: "internal/auth/sqlstore_test.go + internal/authstore/authstore_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: PKCS#1-only, no min modulus, trailing data ignored, rand.Read errors discarded at 4 sites. atproto/session.go is a one-line newID error-propagation fix only — do not expand into atproto work."]
+      required_test_first: "TestParseRSAPrivateKeyPKCS8 before adding PKCS#8 support."
+      target_files: ["internal/auth/sqlstore.go", "internal/auth/storage.go", "internal/admin/users.go", "internal/protocols/atproto/session.go", "internal/authstore/authstore.go"]
+      minimal_change: "Harden parse functions; change newID signatures to return error and update callers; atproto change limited to newID."
+      acceptance_checks: ["go test ./internal/auth/ ./internal/authstore/ ./internal/admin/ ./internal/protocols/atproto/ -race"]
+
+  - id: T-critic1
+    title: "Critic: Decide B8 admin scope (instance vs tenant)"
+    status: completed
+    decision: "INSTANCE-SCOPED. Keep current behavior (global is_admin, unscoped by tenant). Only atomicity is broken. T4 implements single atomic INSERT with conditional subquery: CASE WHEN (SELECT COUNT(*) FROM users)=0 THEN 1 ELSE ? END. Do NOT add WHERE tenant_id."
+    description: "Challenge the CreateUser first-admin logic. Decide and document whether the first-user admin is instance-scoped (identity host, current behavior) or tenant-scoped. Consider: admin routes live on the identity host; per-tenant isolation; multi-tenant deployments. Produce a documented decision that T4 implements."
+    wave: 1
+    agent: gem-critic
+    covers: [B8]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/store/auth.go
+        description: "CreateUser (line 151) makes first user in whole store the instance admin, unscoped by tenant."
+    acceptance_criteria:
+      - "A clear, justified decision on admin scope (instance vs tenant) is produced and handed to T4."
+      - "Edge cases considered: multi-tenant first-admin race, per-tenant admin isolation."
+    success_criteria:
+      - "Decision documented in T4 handoff; no code changes (critic is advisory)."
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: T-critic2
+    title: "Critic: Review breaking-change migration strategy"
+    status: completed
+    decision: "v5: sentinel '!invalidated-by-migration-v5' + argon2id (m=65536,t=3,p=1,16B salt,32B out) + max secret 128B + CLI 'sovereign clients set-secret <id>' (UPDATE-based, 32B base64url secret). v6: existing NULL-expires_at tokens SURVIVE (grace); add family_id + rotated_at columns; rotation sets rotated_at, reuse revokes family. E2 retry: no grace window (RFC 9700)."
+    description: "Challenge the breaking-change handling for Step 1 (strict config) and Step 4 (client-secret + refresh-token invalidation). Validate the migration approach (sentinel hash for plaintext secrets, refresh-token expiry enforcement), the operator migration steps, and that CHANGELOG will document them. Produce approved migration specs for T12/T13 and breaking-change notes for T14. ADDITIONAL DECISIONS REQUIRED: (1) Migration v5 MUST include a re-registration mechanism for invalidated plaintext client secrets — an admin CLI command `sovereign clients set-secret <id>` (or UPDATE-based path), because CreateClient's INSERT unique on client_id blocks plain re-registration. (2) B4 hashing algorithm: prefer argon2id (avoids bcrypt 72-byte truncation) and enforce a max client-secret length in CreateClient. (3) Migration v6 grace policy: decide explicitly whether existing valid refresh tokens survive the migration or are all invalidated (recommend: survive; rotation/reuse-detection applies to post-migration tokens). (4) E2 reuse-detection retry false-positive: a client retrying after a lost response (or parallel refresh requests) redeems the already-rotated token and triggers family revocation — acceptable per OAuth2 BCP; document it (or add a short grace window) in the spec."
+    wave: 1
+    agent: gem-critic
+    covers: [B4, E2, F1]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/store/migrate.go
+        description: "Migrations slice (line 22) — v5 (B4) and v6 (E2) will be appended; critic validates ordering and invalidation approach."
+    acceptance_criteria:
+      - "Approved migration v5 spec (invalidate plaintext client secrets) INCLUDING a re-registration mechanism (CLI `sovereign clients set-secret <id>` or UPDATE path)."
+      - "Approved migration v6 spec (refresh-token rotation marker, if needed) INCLUDING the pre-migration grace policy and reuse-detection retry false-positive documentation."
+      - "B4 hashing decision: argon2id + max client-secret length in CreateClient."
+      - "Breaking-change notes for strict config and secret/token invalidation produced for T14."
+    success_criteria:
+      - "Migration specs + breaking-change notes documented; no code changes (critic is advisory)."
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 2 — tenant identity resolution + first-admin atomicity
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T4
+    title: "B8: Atomic, tenant-scoped CreateUser"
+    status: completed
+    description: "In internal/store/auth.go CreateUser, move the SELECT COUNT(*) + INSERT into one transaction so the first-admin decision is atomic. Scope the count by tenant per the T-critic1 decision (instance-scoped vs tenant-scoped). Add a concurrency test proving exactly one admin is created under concurrent first-user creation."
+    wave: 2
+    agent: gem-implementer
+    covers: [B8]
+    dependencies: [T3, T-critic1]
+    conflicts_with: [T12, T13]
+    context_files:
+      - path: internal/store/auth.go
+        description: "CreateUser (line 151) does SELECT COUNT(*) then INSERT, no transaction, unscoped by tenant."
+    acceptance_criteria:
+      - "CreateUser runs count+insert in one transaction."
+      - "Admin scope matches the T-critic1 decision (instance or tenant)."
+      - "Concurrent first-user creation yields exactly one admin."
+    success_criteria:
+      - "TestCreateUserConcurrentFirstAdmin: N goroutines create first user, exactly 1 admin."
+      - "TestCreateUserTenantScoped (per decision)."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, SQLite]
+    test_coverage: "internal/store/auth_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: count+insert not transactional, unscoped by tenant. Admin scope decision from T-critic1 is authoritative."]
+      required_test_first: "TestCreateUserConcurrentFirstAdmin before changing CreateUser."
+      target_files: ["internal/store/auth.go"]
+      minimal_change: "Wrap count+insert in a transaction; apply T-critic1 scope decision."
+      acceptance_checks: ["go test ./internal/store/ -race -run CreateUser"]
+
+  - id: T8
+    title: "A2: Fix tenant identity resolution in keys/proofs endpoints"
+    status: completed
+    description: "In internal/endpoints/endpoints.go, replace tenantID := r.Host / strings.Split(r.Host, \":\")[0] (lines 43, 68, 88, 109) with tenant.FromContext(r.Context()); return 404 when absent; query with t.ID (the tenant's internal ID, not the handle). Rewrite endpoints_test.go to seed real tenants (IDs != handles) and inject them into the request context via tenant.WithTenant."
+    wave: 2
+    agent: gem-implementer
+    covers: [A2]
+    dependencies: [T1]
+    conflicts_with: []
+    context_files:
+      - path: internal/endpoints/endpoints.go
+        description: "serveKeys (43), serveWKD (68), serveKeysPage (88), ProofsHandler.ServeHTTP (109) use r.Host as tenantID — use tenant.FromContext + t.ID."
+      - path: internal/endpoints/endpoints_test.go
+        description: "Tests bake in the defect (TenantID 'alice.example.com' == handle). Rewrite to seed real tenants (ID != handle) and inject via tenant.WithTenant."
+    acceptance_criteria:
+      - "Endpoints resolve tenant from context, 404 when absent, query with t.ID."
+      - "Tests seed real tenants with ID != handle and pass via context."
+      - "Cross-tenant IDOR test: tenant A cannot read tenant B's keys/proofs."
+    success_criteria:
+      - "TestKeysEndpointUsesTenantID: seed tenant with ID 't1', handle 'alice.example.com'; keys served."
+      - "TestKeysEndpointNoTenant404: no tenant in context -> 404."
+      - "TestCrossTenantIDOR: attacker tenant cannot read victim's keys/proofs."
+      - "All existing endpoints tests rewritten to seed real tenants."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, net/http]
+    test_coverage: "internal/endpoints/endpoints_test.go rewrite + additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: tenantID := r.Host passed to ListPublicKeys/VerifiedProofClaims; tenants have ID 'identity' and Handle 'id.<domain>' — distinct. Tests bake in the defect."]
+      required_test_first: "TestKeysEndpointUsesTenantID (seeding real tenant) before changing endpoints.go."
+      target_files: ["internal/endpoints/endpoints.go", "internal/endpoints/endpoints_test.go"]
+      minimal_change: "Use tenant.FromContext + t.ID; rewrite tests to seed real tenants."
+      acceptance_checks: ["go test ./internal/endpoints/ -race", "grep for 'tenantID := r.Host' returns nothing"]
+
+  - id: T9
+    title: "B15: Derive DID doc from resolved tenant.Handle, never r.Host"
+    status: completed
+    description: "In internal/server/server.go didDocHandler (lines 385-410), derive the fallback did:web:<handle> and alsoKnownAs from the resolved tenant.Handle (via NormalizeHost), never from r.Host. When the tenant has a stored DID, use it."
+    wave: 2
+    agent: gem-implementer
+    covers: [B15]
+    dependencies: [T1]
+    conflicts_with: [T10, T11]
+    context_files:
+      - path: internal/server/server.go
+        description: "didDocHandler (line 385) uses r.Host for did:web: and alsoKnownAs fallback — use tenant.Handle."
+    acceptance_criteria:
+      - "didDocHandler uses tenant.Handle (normalized) for did:web: and alsoKnownAs, never r.Host."
+      - "Stored DID takes precedence over fallback."
+    success_criteria:
+      - "TestDIDDocUsesTenantHandle: tenant with stored DID uses it; tenant without DID uses did:web:<handle>, not r.Host."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, net/http]
+    test_coverage: "internal/server/server_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: didDocHandler uses r.Host for did:web: and alsoKnownAs when tenant has no stored DID."]
+      required_test_first: "TestDIDDocUsesTenantHandle before changing didDocHandler."
+      target_files: ["internal/server/server.go"]
+      minimal_change: "Swap r.Host for normalized tenant.Handle in didDocHandler."
+      acceptance_checks: ["go test ./internal/server/ -race -run DIDDoc"]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 3 — fail-closed startup + client-secret hashing
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T10
+    title: "A1: Fail-closed startup (OIDC/WebAuthn init errors are fatal)"
+    status: completed
+    description: "In internal/server/server.go, change buildRouter() to return error. Propagate from New() (line 96: s.buildRouter() -> if err := s.buildRouter(); err != nil { return nil, err }). Treat auth.NewProvider and auth.NewWebAuthnHandler init failures as hard failures (return the error, do not log-and-continue). cmd/sovereign/main.go already returns err from server.New — no change needed there."
+    wave: 3
+    agent: gem-implementer
+    covers: [A1]
+    dependencies: [T9]
+    conflicts_with: [T11]
+    context_files:
+      - path: internal/server/server.go
+        description: "buildRouter (line 154) has no error return; OIDC (226-229) and WebAuthn (232-235) init failures logged, not fatal. New() (line 96) calls s.buildRouter() without error."
+    acceptance_criteria:
+      - "buildRouter returns error; New propagates it."
+      - "OIDC provider init failure causes New to return an error (server does not boot)."
+      - "WebAuthn handler init failure causes New to return an error."
+    success_criteria:
+      - "TestNewFailsOnOIDCInitError: inject provider init failure -> New returns error."
+      - "TestNewFailsOnWebAuthnInitError: inject webauthn init failure -> New returns error."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, net/http]
+    test_coverage: "internal/server/server_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: buildRouter has no error return; OIDC/WebAuthn init failures logged not fatal; server boots and serves without auth."]
+      required_test_first: "TestNewFailsOnOIDCInitError before changing buildRouter signature."
+      target_files: ["internal/server/server.go"]
+      minimal_change: "Add error return to buildRouter; propagate from New; make both inits hard failures."
+      acceptance_checks: ["go test ./internal/server/ -race -run New"]
+
+  - id: T12
+    title: "B4: Hash client secrets + invalidate plaintext (migration v5)"
+    status: completed
+    description: "Store client secrets as argon2id hashes (golang.org/x/crypto/argon2 — already a dependency via ssh; avoids bcrypt 72-byte truncation). In store/auth.go CreateClient, hash the secret before insert and enforce a max secret length; add a VerifyClientSecret method using a constant-time comparator. In auth/sqlstore.go and auth/storage.go AuthorizeClientIDSecret, verify against the hash. MemoryStore.AddClient (storage.go) MUST ALSO hash via the same hashing helper (it currently stores plaintext — if verify checks a hash but AddClient stores plaintext, every MemoryStore client auth breaks AND MemoryStore still holds plaintext). Add migration v5 invalidating existing plaintext secrets (set a sentinel hash + log affected client IDs) per T-critic2 spec, INCLUDING the re-registration mechanism (admin CLI `sovereign clients set-secret <id>`). Update existing test fixtures that assert plaintext storage (auth_test.go:208 asserts c.Secret == plaintext; sqlstore_test.go:30,45 and storage_test.go:24,79 insert plaintext and call AuthorizeClientIDSecret with plaintext) to insert via the hashing path and verify via VerifyClientSecret."
+    wave: 3
+    agent: gem-implementer
+    covers: [B4]
+    dependencies: [T7, T-critic2]
+    conflicts_with: [T13]
+    context_files:
+      - path: internal/store/auth.go
+        description: "CreateClient (line 318) stores plaintext secret; ClientByID (line 332) returns it. Add hashing + VerifyClientSecret + max secret length."
+      - path: internal/auth/sqlstore.go
+        description: "AuthorizeClientIDSecret (line 252) compares c.Secret != clientSecret — use constant-time hash verify."
+      - path: internal/auth/storage.go
+        description: "MemoryStore.AuthorizeClientIDSecret (line 315) compares plaintext — use hash verify. MemoryStore.AddClient stores plaintext — MUST hash via the same helper."
+      - path: internal/store/migrate.go
+        description: "Append migration v5 invalidating plaintext client secrets per T-critic2 spec (incl. re-registration CLI)."
+    acceptance_criteria:
+      - "Client secrets stored as argon2id hashes, never plaintext (both SQL and MemoryStore paths)."
+      - "MemoryStore.AddClient hashes via the same helper as CreateClient (no plaintext in memory store)."
+      - "AuthorizeClientIDSecret verifies with constant-time comparator."
+      - "CreateClient enforces a max client-secret length."
+      - "Migration v5 invalidates existing plaintext secrets, logs affected client IDs, and provides a re-registration path (CLI `sovereign clients set-secret <id>`)."
+      - "Existing test fixtures updated to insert via the hashing path and verify via VerifyClientSecret."
+    success_criteria:
+      - "TestClientSecretStoredHashed: DB stores hash, not plaintext."
+      - "TestMemoryStoreClientSecretHashed: MemoryStore.AddClient stores hash, not plaintext."
+      - "TestAuthorizeClientIDSecret: correct secret passes, wrong fails."
+      - "TestMigrationInvalidatesPlaintextSecrets: pre-v5 plaintext rows become unverifiable."
+      - "TestClientSecretMaxLength: over-length secret rejected at CreateClient."
+      - "Updated fixtures (auth_test.go, sqlstore_test.go, storage_test.go) pass."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, golang.org/x/crypto/argon2, SQLite]
+    test_coverage: "internal/store/auth_test.go + internal/auth/sqlstore_test.go + internal/auth/storage_test.go additions + fixture updates"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: client secrets stored plaintext, compared with !=. MemoryStore.AddClient also stores plaintext — hash it via the same helper. Migration v5 spec from T-critic2 (incl. re-registration CLI) is authoritative. Fixture updates are REQUIRED, not incidental."]
+      required_test_first: "TestClientSecretStoredHashed before changing CreateClient."
+      target_files: ["internal/store/auth.go", "internal/auth/sqlstore.go", "internal/auth/storage.go", "internal/store/migrate.go", "internal/store/auth_test.go", "internal/auth/sqlstore_test.go", "internal/auth/storage_test.go"]
+      minimal_change: "Hash on create (SQL + MemoryStore via shared helper), verify on authorize, migration v5 invalidates plaintext + re-registration CLI, update fixtures."
+      acceptance_checks: ["go test ./internal/store/ ./internal/auth/ -race -run Client"]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 4 — NodeInfo truthfulness + refresh-token lifecycle
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T11
+    title: "F3: Truthful NodeInfo (version, protocols, openRegistrations)"
+    status: completed
+    description: "In internal/server/server.go buildRouter nodeinfo config (lines 189-195): derive SoftwareVersion from the build version variable passed as a SEPARATE parameter to New(cfg, version) (or set on the Server struct at construction) — NOT via server.Config, because version is a build-time constant, not an operator-configurable YAML key. Keep OpenRegistrations in Config (legitimate operator decision). Derive Protocols from what is actually wired: solid, remotestorage, atproto, AND activitypub (server.go:200 wires activitypub.ServeActor at /profile/ — it IS served and functional; do not silently drop it). Update internal/protocols/nodeinfo/handler.go if needed."
+    wave: 4
+    agent: gem-implementer
+    covers: [F3]
+    dependencies: [T10, T2]
+    conflicts_with: []
+    context_files:
+      - path: internal/server/server.go
+        description: "nodeinfo config (line 189) hard-codes SoftwareVersion '0.1.0', Protocols ['solid','remotestorage','atproto'], OpenRegistrations false. activitypub.ServeActor wired at /profile/ (line 200). New() (line 96) — add version parameter."
+      - path: cmd/sovereign/main.go
+        description: "var version = 'dev' (line 27) — pass to New(cfg, version)."
+      - path: internal/server/config.go
+        description: "Add OpenRegistrations field only (must be known to strict F1 parsing). Do NOT add a Version field."
+      - path: internal/protocols/nodeinfo/handler.go
+        description: "Config struct (line 46) — no change needed unless version/protocols derivation requires it."
+    acceptance_criteria:
+      - "NodeInfo SoftwareVersion matches the build version passed to New(cfg, version), not a Config field."
+      - "NodeInfo Protocols lists only wired protocols, INCLUDING activitypub (ServeActor is served at /profile/)."
+      - "NodeInfo OpenRegistrations derives from config."
+    success_criteria:
+      - "TestNodeInfoVersionFromBuild: version matches the version passed to New."
+      - "TestNodeInfoProtocolsWired: protocols match wired set incl. activitypub."
+      - "TestNodeInfoOpenRegistrationsFromConfig."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, net/http]
+    test_coverage: "internal/server/server_test.go + internal/protocols/nodeinfo/handler_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: NodeInfo hard-codes version '0.1.0', advertises protocols that do not function, hard-codes OpenRegistrations false. Version is a build-time constant — pass to New(cfg, version), NOT via Config. activitypub IS wired at /profile/ — include it in Protocols."]
+      required_test_first: "TestNodeInfoVersionFromBuild before threading version."
+      target_files: ["internal/server/server.go", "cmd/sovereign/main.go", "internal/server/config.go", "internal/protocols/nodeinfo/handler.go"]
+      minimal_change: "Add version param to New(cfg, version); add OpenRegistrations config field; derive protocols from wired set incl. activitypub."
+      acceptance_checks: ["go test ./internal/server/ ./internal/protocols/nodeinfo/ -race -run NodeInfo"]
+
+  - id: T13
+    title: "E2: Refresh-token expiry, rotation, and reuse detection"
+    status: completed
+    note: "First attempt returned empty (no work done); re-dispatched and completed. Migration v6 + family_id/rotated_at + in-memory bypass fix all landed."
+    description: "In internal/auth/sqlstore.go CreateAccessAndRefreshTokens, set the configured TTL on the persisted refresh token (ExpiresAt). Enforce expiry on redemption (GetAuthRefreshTokenByHash already checks ExpiresAt — ensure it is populated). Rotate on use: on redemption, delete the old token and insert a new one in one transaction. Add reuse detection: if a rotated token is redeemed again, revoke the whole family. The in-memory refresh map (s.refresh, sqlstore.go:192) bypasses rotation and reuse detection — on rotation AND on reuse-detection revocation, DELETE the in-memory map entry (mirroring RevokeToken line 208). Add migration v6 if a family/rotation marker is required (per T-critic2, incl. grace policy: existing valid refresh tokens survive; rotation/reuse-detection applies to post-migration tokens)."
+    wave: 4
+    agent: gem-implementer
+    covers: [E2]
+    dependencies: [T12, T-critic2]
+    conflicts_with: []
+    context_files:
+      - path: internal/auth/sqlstore.go
+        description: "CreateAccessAndRefreshTokens (line 150) persists refresh token without ExpiresAt. TokenRequestByRefreshToken (line 179) redeems it; falls back to in-memory s.refresh map (line 192). RevokeToken (line 208) deletes the map entry — mirror this on rotation + reuse-detection revocation."
+      - path: internal/store/auth.go
+        description: "SaveAuthRefreshToken (line 54) has expires_at column but create path doesn't populate it. GetAuthRefreshTokenByHash (line 78) enforces expiry."
+      - path: internal/store/migrate.go
+        description: "Append migration v6 (rotation/family marker) if needed, after v5."
+    acceptance_criteria:
+      - "Refresh tokens persisted with configured TTL (ExpiresAt populated)."
+      - "Expired refresh tokens rejected on redemption."
+      - "Refresh tokens rotated on use; reuse of a rotated token detected and family revoked."
+      - "In-memory refresh map entry deleted on rotation AND on reuse-detection revocation (mirroring RevokeToken)."
+    success_criteria:
+      - "TestRefreshTokenExpiryEnforced: expired token rejected."
+      - "TestRefreshTokenRotation: redemption rotates token; old token invalid."
+      - "TestRefreshTokenReuseDetected: redeeming a rotated token revokes the family."
+      - "TestRefreshTokenReuseDetectedInMemory: redeeming a rotated token through the in-memory path revokes the family (map entry deleted)."
+      - "task lint, task test -race, task vet pass."
+    tech_stack: [Go, SQLite]
+    test_coverage: "internal/auth/sqlstore_test.go + internal/store/auth_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Root cause confirmed: refresh tokens persisted without expiry (schema has expires_at but create path doesn't populate it). In-memory s.refresh map bypasses rotation/reuse detection — delete the map entry on rotation and revocation, mirroring RevokeToken line 208."]
+      required_test_first: "TestRefreshTokenExpiryEnforced before populating ExpiresAt."
+      target_files: ["internal/auth/sqlstore.go", "internal/store/auth.go", "internal/store/migrate.go"]
+      minimal_change: "Populate ExpiresAt on issue; rotate on use; reuse detection per T-critic2 spec; delete in-memory map entry on rotation + revocation."
+      acceptance_checks: ["go test ./internal/auth/ ./internal/store/ -race -run Refresh"]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 5 — docs + coverage budget + final security review
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T14
+    title: "F1-docs + F4-changelog: Clean config.example.yml + CHANGELOG"
+    status: completed
+    description: "In config.example.yml, delete or comment unimplemented keys prefixed '# NOT YET IMPLEMENTED' using the canonical removed-key list (MUST match T2's rejected-key list exactly): identity_host, sqlite.mode, sqlite.single.path, tls.*, ipfs.*, atproto.did_method, atproto.plc_endpoint, backup.cron_expr, backup.destination_type, storage.s3.secure. Keep config.example.yml in sync with internal/server/config.go. T14 OWNS CHANGELOG.md entirely: add the strict-config breaking-change note listing the exact keys operators must remove (per T-critic2) AND the F4 capability-status update reflecting actual delivered state (client-secret/refresh-token invalidation migration steps)."
+    wave: 5
+    agent: gem-documentation-writer
+    covers: [F1, F4]
+    dependencies: [T2, T11, T-critic2]
+    conflicts_with: []
+    context_files:
+      - path: config.example.yml
+        description: "Documents a large surface that does not exist (identity_host, sqlite.mode/single.path, tls.*, ipfs.*, atproto.*, backup.*, storage.s3.secure). Remove exactly the canonical key list."
+      - path: CHANGELOG.md
+        description: "Add strict-config breaking-change note (key-removal list) AND F4 capability-status update. T14 owns CHANGELOG.md entirely."
+    acceptance_criteria:
+      - "config.example.yml contains only implemented keys, each marked '# NOT YET IMPLEMENTED' if not wired."
+      - "config.example.yml removed-key list matches T2's rejected-key list exactly (canonical list)."
+      - "config.example.yml matches internal/server/config.go field set."
+      - "CHANGELOG documents the strict-config breaking change with the key-removal list AND the F4 capability-status update (incl. client-secret/refresh-token invalidation migration steps)."
+    success_criteria:
+      - "config.example.yml parses under strict F1 validation (no unknown keys)."
+      - "CHANGELOG breaking-change section + capability-status update present."
+    task_type: update
+    audience: developers
+    coverage_matrix: ["config.example.yml", "CHANGELOG.md"]
+
+  - id: T15
+    title: "F4: README truthful capability status"
+    status: completed
+    description: "Add a Status column to README distinguishing implemented+wired+integration-tested from package-complete-not-wired. Correct any overstatement of delivered functionality (e.g. capabilities marked Shipped that are not fully wired). README-only: CHANGELOG.md is owned by T14 (F4 capability-status update lives there). Ensure the docs-claims CI gate still passes."
+    wave: 5
+    agent: gem-documentation-writer
+    covers: [F4]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: README.md
+        description: "Capability table (lines 12-47) overstates delivered functionality; add Status column distinguishing wired+tested from package-complete-not-wired."
+    acceptance_criteria:
+      - "README capability table has a Status column distinguishing wired+integration-tested from package-complete-not-wired."
+      - "No capability marked Shipped without a live route + backing test (docs-claims gate passes)."
+    success_criteria:
+      - "task docs-verify passes."
+      - "README status column present and accurate."
+    task_type: update
+    audience: developers
+    coverage_matrix: ["README.md"]
+
+  - id: T17
+    title: "Coverage budget: cmd/sovereign + internal/authstore >=80%"
+    status: completed
+    note: "cmd/sovereign 83.3%, authstore 93.6%. Follow-up (T16 close): endpoints 98.7%, store 82.4%, total 87.2%."
+    description: "Write additional tests to bring cmd/sovereign (currently 62.5%) and internal/authstore (currently 75.7%) to >=80% each, closing the coverage-gate gap that T2/T7 single tests may not close. Add tests for cmd/sovereign main.go loadServerConfig paths (config loading, error propagation) and internal/authstore key parsing/verification. Tests only — no production code changes."
+    wave: 5
+    agent: gem-implementer
+    covers: [coverage]
+    dependencies: [T2, T7, T10, T11]
+    conflicts_with: []
+    context_files:
+      - path: cmd/sovereign/main_test.go
+        description: "Add coverage for loadServerConfig paths (62.5% -> >=80%)."
+      - path: internal/authstore/authstore_test.go
+        description: "Add coverage for key parsing/verification (75.7% -> >=80%)."
+    acceptance_criteria:
+      - "cmd/sovereign package coverage >=80%."
+      - "internal/authstore package coverage >=80%."
+      - "scripts/coverage-gate.sh passes (no package below 80%)."
+    success_criteria:
+      - "go test ./cmd/sovereign/ -cover shows >=80%."
+      - "go test ./internal/authstore/ -cover shows >=80%."
+      - "task test passes."
+    tech_stack: [Go]
+    test_coverage: "cmd/sovereign/main_test.go + internal/authstore/authstore_test.go additions"
+    handoff:
+      do_not_reinvestigate: ["Coverage gap confirmed: cmd/sovereign 62.5%, internal/authstore 75.7% (below 80% gate). Tests only — do not change production code."]
+      required_test_first: "Add failing-coverage tests (assert coverage via go test -cover) before adding test cases."
+      target_files: ["cmd/sovereign/main_test.go", "internal/authstore/authstore_test.go"]
+      minimal_change: "Add tests only; no production code changes."
+      acceptance_checks: ["go test ./cmd/sovereign/ -cover", "go test ./internal/authstore/ -cover", "scripts/coverage-gate.sh"]
+
+  - id: T16
+    title: "Full security review of Steps 1-4"
+    status: completed
+    verdict: "PASS-WITH-NOTES, approve for merge. All 7 checks verified, all gates pass. 2 LOW findings closed: (1) coverage regression endpoints/store below 80% fixed (98.7%/82.4%, total 87.2%); (2) CreateUser u.IsAdmin return edge fixed via RETURNING is_admin."
+    description: "gem-reviewer audits all implementation tasks (T1-T13) for: fail-closed startup correctness, tenant-scoping (no IDOR), atomicity (invite, first-admin, refresh rotation), auth primitive hardening (JWT claims, secret hashing, key parsing), and config strictness. Verify each verification gate: task lint, task test -race, task vet, task vulncheck, coverage >=80% (INCLUDING cmd/sovereign and internal/authstore via T17), concurrency tests, config strictness test, negative JWT tests, cross-tenant IDOR tests."
+    wave: 5
+    agent: gem-reviewer
+    covers: [A1, A2, B3, B4, B7, B8, B15, B16, D5, E2, E3, F1, F3]
+    dependencies: [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T17]
+    conflicts_with: []
+    context_files:
+      - path: internal/server/server.go
+        description: "A1, B15, B16, F3 changes."
+      - path: internal/endpoints/endpoints.go
+        description: "A2 tenant resolution."
+      - path: internal/store/auth.go
+        description: "B7, B8, B4, E2 changes."
+      - path: internal/auth/access_token.go
+        description: "B3 JWT hardening."
+      - path: internal/auth/sqlstore.go
+        description: "B4, E2, E3 changes."
+    acceptance_criteria:
+      - "All verification gates pass: task lint, task test -race, task vet, task vulncheck, coverage >=80% (incl. cmd/sovereign and internal/authstore)."
+      - "No cross-tenant IDOR in keys/proofs endpoints."
+      - "No plaintext client secrets remain (SQL or MemoryStore); no no-exp refresh tokens."
+      - "Startup fails closed on auth init errors."
+    success_criteria:
+      - "Review report documents each finding as fixed with evidence (test names, gate results)."
+      - "Any residual finding flagged with severity and remediation."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true

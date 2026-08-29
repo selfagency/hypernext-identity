@@ -2,11 +2,18 @@ package authstore
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/store"
@@ -139,5 +146,197 @@ func TestRefreshTokenRoundTrip(t *testing.T) {
 	}
 	if _, _, _, err := as.LoadRefreshToken(ctx, "tok1"); err == nil {
 		t.Fatal("expected error after delete")
+	}
+}
+
+// TestParseRSAPrivatePKCS8 verifies a PKCS#8-encoded RSA private key is
+// accepted in addition to PKCS#1.
+func TestParseRSAPrivatePKCS8(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+
+	got, err := parseRSAPrivate(pemStr)
+	if err != nil {
+		t.Fatalf("parseRSAPrivate(PKCS#8): %v", err)
+	}
+	if got.N.Cmp(key.N) != 0 {
+		t.Fatal("parsed key modulus mismatch")
+	}
+}
+
+// TestParseRSAPrivateRejectsWeak verifies keys with a modulus below 2048 bits
+// are rejected.
+func TestParseRSAPrivateRejectsWeak(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}))
+	if _, err := parseRSAPrivate(pemStr); err == nil {
+		t.Fatal("weak (<2048-bit) key accepted")
+	}
+}
+
+// TestParseRSAPrivateRejectsTrailing verifies data after the PEM block is
+// rejected.
+func TestParseRSAPrivateRejectsTrailing(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})) + "\ntrailing garbage\n"
+	if _, err := parseRSAPrivate(pemStr); err == nil {
+		t.Fatal("trailing data after PEM block accepted")
+	}
+}
+
+// TestParseRSAPrivateRejectsInvalidPEM verifies a non-PEM string is rejected.
+func TestParseRSAPrivateRejectsInvalidPEM(t *testing.T) {
+	if _, err := parseRSAPrivate("not a pem block"); err == nil {
+		t.Fatal("non-PEM input accepted")
+	}
+}
+
+// TestParseRSAPrivateRejectsGarbage verifies a PEM block whose bytes are
+// neither valid PKCS#1 nor PKCS#8 is rejected.
+func TestParseRSAPrivateRejectsGarbage(t *testing.T) {
+	pemStr := string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: []byte("this is not a DER-encoded key"),
+	}))
+	if _, err := parseRSAPrivate(pemStr); err == nil {
+		t.Fatal("garbage DER bytes accepted")
+	}
+}
+
+// TestParseRSAPrivateRejectsNonRSA verifies a PKCS#8-encoded non-RSA key
+// (here an EC key) is rejected.
+func TestParseRSAPrivateRejectsNonRSA(t *testing.T) {
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(ecdsaKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	if _, err := parseRSAPrivate(pemStr); err == nil {
+		t.Fatal("non-RSA PKCS#8 key accepted")
+	}
+}
+
+// TestSigningKey verifies SigningKey returns the MemoryStore's signing key.
+func TestSigningKey(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	mem, err := auth.NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	as, err := New(ctx, mem, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := as.SigningKey(); got == nil {
+		t.Fatal("SigningKey() = nil")
+	} else if got.N.Cmp(mem.SigningKeyMaterial().N) != 0 {
+		t.Fatal("SigningKey() does not match MemoryStore key")
+	}
+}
+
+// TestLoadRefreshTokenRevoked verifies a revoked token is rejected.
+func TestLoadRefreshTokenRevoked(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	mem, err := auth.NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	as, err := New(ctx, mem, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw := "revoked-token"
+	if err := as.PersistRefreshToken(ctx, raw, "alice", "client1", []string{"openid"}); err != nil {
+		t.Fatal(err)
+	}
+	// Mark the token revoked directly in the store.
+	if err := s.SaveAuthRefreshToken(ctx, &store.AuthRefreshToken{
+		Token:     hashToken(raw),
+		Subject:   "alice",
+		ClientID:  "client1",
+		Scopes:    "openid",
+		RevokedAt: time.Now().UTC(),
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := as.LoadRefreshToken(ctx, raw); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("LoadRefreshToken(revoked) err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestLoadRefreshTokenExpired verifies an expired token is rejected.
+func TestLoadRefreshTokenExpired(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	mem, err := auth.NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	as, err := New(ctx, mem, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw := "expired-token"
+	if err := as.PersistRefreshToken(ctx, raw, "alice", "client1", []string{"openid"}); err != nil {
+		t.Fatal(err)
+	}
+	// Set an expiry in the past directly in the store.
+	if err := s.SaveAuthRefreshToken(ctx, &store.AuthRefreshToken{
+		Token:     hashToken(raw),
+		Subject:   "alice",
+		ClientID:  "client1",
+		Scopes:    "openid",
+		ExpiresAt: time.Now().UTC().Add(-time.Hour),
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := as.LoadRefreshToken(ctx, raw); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("LoadRefreshToken(expired) err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestNewClosedStore verifies New propagates a non-ErrNotFound store error
+// (here a closed store) instead of silently generating a new key.
+func TestNewClosedStore(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	mem, err := auth.NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(ctx, mem, s); err == nil {
+		t.Fatal("New on closed store = nil, want error")
 	}
 }
