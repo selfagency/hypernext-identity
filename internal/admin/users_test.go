@@ -162,3 +162,56 @@ func TestNewIDPropagatesError(t *testing.T) {
 type errorReader struct{}
 
 func (errorReader) Read([]byte) (int, error) { return 0, errors.New("injected rand failure") }
+
+// failAfterReader returns success for the first n reads, then fails. It lets
+// tests exercise each newID call site in ServeHTTP independently.
+type failAfterReader struct {
+	n int
+}
+
+func (r *failAfterReader) Read(p []byte) (int, error) {
+	if r.n <= 0 {
+		return 0, errors.New("injected rand failure")
+	}
+	r.n--
+	return len(p), nil
+}
+
+// TestUserHandlerNewIDFailure verifies ServeHTTP returns 500 when newID fails
+// at each call site (user id, raw invite token, invite token id), covering the
+// newID error-propagation branches added in the hardening pass.
+func TestUserHandlerNewIDFailure(t *testing.T) {
+	form := url.Values{"email": {"alice@example.com"}, "handle": {"alice"}}
+	post := func(reader *failAfterReader) int {
+		st := newTestStore(t)
+		seedIdentityTenant(t, st)
+		h := &UserHandler{Store: st, Sender: &fakeSender{}, BaseURL: "https://id.example.com"}
+
+		orig := rand.Reader
+		rand.Reader = reader
+		t.Cleanup(func() { rand.Reader = orig })
+
+		req := httptest.NewRequest("POST", "/admin/users", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// newID call order in ServeHTTP: uid (1), raw (2), itID (3).
+	cases := []struct {
+		name    string
+		success int
+	}{
+		{"user id fails", 0},
+		{"raw invite token fails", 1},
+		{"invite token id fails", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if code := post(&failAfterReader{n: tc.success}); code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500", code)
+			}
+		})
+	}
+}

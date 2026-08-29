@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"sync"
 	"testing"
@@ -412,6 +413,34 @@ func TestClientInterface(t *testing.T) {
 		t.Fatal("clock skew should be 0")
 	}
 }
+
+// TestMemoryStoreNewIDErrorPaths verifies the newID error-propagation branches
+// added in the hardening pass: CreateAuthRequest, CreateAccessToken, and
+// CreateAccessAndRefreshTokens all return the rand.Read error instead of
+// silently discarding it.
+func TestMemoryStoreNewIDErrorPaths(t *testing.T) {
+	store, err := NewMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	orig := rand.Reader
+	rand.Reader = errorReader{}
+	t.Cleanup(func() { rand.Reader = orig })
+
+	if _, err := store.CreateAuthRequest(ctx, &oidc.AuthRequest{ClientID: "c1"}, ""); err == nil {
+		t.Fatal("CreateAuthRequest did not propagate newID error")
+	}
+	if _, _, err := store.CreateAccessToken(ctx, &authRequest{subject: "u1"}); err == nil {
+		t.Fatal("CreateAccessToken did not propagate newID error")
+	}
+	if _, _, _, err := store.CreateAccessAndRefreshTokens(ctx, &authRequest{subject: "u1"}, ""); err == nil {
+		t.Fatal("CreateAccessAndRefreshTokens did not propagate newID error")
+	}
+}
+
+// errorReader is defined in sqlstore_test.go (same package).
 
 // TestSigningKeyAndKeyTypes verifies the signingKey and key types.
 func TestSigningKeyAndKeyTypes(t *testing.T) {

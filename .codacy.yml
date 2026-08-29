@@ -22,3 +22,9 @@ engines:
   gosec:
     exclude_paths:
       - "internal/endpoints/endpoints.go"
+      # Deliberate weak-key negative tests: these fixtures generate 1024-bit
+      # RSA keys to assert the parser rejects them. gosec's G402 (RSA >= 2048)
+      # flags the fixture itself; the inline #nosec G402 is not honored by
+      # Codacy's gosec engine, so exclude the files here.
+      - "internal/auth/sqlstore_test.go"
+      - "internal/authstore/authstore_test.go"
