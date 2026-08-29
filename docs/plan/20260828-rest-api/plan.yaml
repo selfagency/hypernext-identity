@@ -283,7 +283,7 @@ tasks:
     description: "Implement sessions table (id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at, user_agent_hash, ip_hash) with sliding renewal, server-side revocation, absolute cap. Ship dual-read gated by auth.session.dual_read (default TRUE): accept old JWT cookies AND new session rows for one release. SAME cookie name for both; middleware distinguishes JWT vs session-token by FORMAT (JWT parse vs session-token lookup); if both formats somehow present -> 400."
     wave: 3
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 0
     covers: [P-2, sessions, authn, M6, R2]
     dependencies: [T0.2, T0.7]
@@ -312,7 +312,7 @@ tasks:
     description: "Add store methods: SetUserDisplayName, UpdateProfileLink, DeleteWebAuthnCredential (refuse last), GetTenantByID, GetTenantByDID, ListUsersPage, ListAuditPage, ListClientsPage, ListTenantsPage, CountUsers, DeleteUser. All tenant-scoped. Admin lists use offset/limit; audit log uses cursor."
     wave: 3
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 0
     covers: [P-5, store, persistence, C4]
     dependencies: [T0.2]
@@ -340,8 +340,9 @@ tasks:
     description: "Verify all prerequisites landed: migration up/down tests (incl pending_deletions), scope table test incl profile:read-only regression, concurrent session-revoke race test, dual-read overlap test, CSRF form-encoded matrix. Gate before any endpoint work."
     wave: 4
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 0
+    verdict: "APPROVED. All 7 exit criteria met (1 with forward-only migration caveat), all 5 gates green (race suite 30 pkgs, lint 0, vet, vulncheck 0, coverage 87.0%). Non-blocking convention gap: migration runner is forward-only (up-only, no down) — recorded as known convention."
     covers: [verification, gate]
     dependencies: [T0.1, T0.2, T0.3, T0.4, T0.5, T0.7]
     conflicts_with: []
